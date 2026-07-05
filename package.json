@@ -1,0 +1,58 @@
+{
+  "name": "code-atlas-mcp",
+  "version": "0.1.0",
+  "description": "Multi-language code intelligence MCP server: symbols, ASTs, call graphs, references, and semantic search for Claude Code and other MCP clients.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "code-atlas": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "grammars",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "grammars": "node scripts/copy-grammars.mjs",
+    "prepare": "node scripts/copy-grammars.mjs",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src test",
+    "format": "prettier --write src test",
+    "dev": "tsx src/index.ts"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "tree-sitter",
+    "ast",
+    "code-search",
+    "lsp",
+    "claude"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^12.11.1",
+    "ignore": "^7.0.5",
+    "web-tree-sitter": "^0.26.10",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^26.1.0",
+    "@vscode/tree-sitter-wasm": "^0.3.1",
+    "eslint": "^10.6.0",
+    "prettier": "^3.9.4",
+    "tsx": "^4.23.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62.1",
+    "vitest": "^4.1.9"
+  }
+}

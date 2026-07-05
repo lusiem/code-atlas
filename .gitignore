@@ -1,0 +1,7 @@
+node_modules/
+dist/
+grammars/*.wasm
+.code-atlas/
+*.log
+coverage/
+.vitest/
