@@ -1,6 +1,6 @@
 import type { Node, Tree } from 'web-tree-sitter';
 import type { LanguageExtractor } from '../extractor.js';
-import type { ExtractedImport, SymbolKind } from '../../types.js';
+import type { ExtractedImport, SymbolBase, SymbolKind } from '../../types.js';
 
 /**
  * Shared query fragments for the typescript / tsx / javascript grammars.
@@ -53,12 +53,67 @@ const JS_ONLY = `
 const TS_QUERY = FN_VALUED_DECLARATOR + SHARED_FUNCTIONS + TS_ONLY + TOP_LEVEL_VARIABLES;
 const JS_QUERY = FN_VALUED_DECLARATOR + SHARED_FUNCTIONS + JS_ONLY + TOP_LEVEL_VARIABLES;
 
+const SHARED_OCCURRENCES = `
+  (call_expression function: (identifier) @call)
+  (call_expression function: (member_expression property: (property_identifier) @call))
+  (new_expression constructor: (identifier) @call)
+  (assignment_expression left: (identifier) @write)
+  (assignment_expression left: (member_expression property: (property_identifier) @write))
+  (augmented_assignment_expression left: (identifier) @write)
+  (identifier) @ref
+  (property_identifier) @ref
+  (shorthand_property_identifier) @ref
+`;
+const TS_OCCURRENCES = `${SHARED_OCCURRENCES}
+  (type_identifier) @ref
+`;
+
 function isExported(defNode: Node): boolean {
   for (let n: Node | null = defNode; n; n = n.parent) {
     if (n.type === 'export_statement') return true;
     if (n.type === 'program') return false;
   }
   return false;
+}
+
+/** Base names from `extends`/`implements` clauses on classes and interfaces. */
+function bases(defNode: Node): SymbolBase[] {
+  const out: SymbolBase[] = [];
+  for (const child of defNode.namedChildren) {
+    if (child?.type === 'class_heritage') {
+      for (const clause of child.namedChildren) {
+        if (clause?.type === 'extends_clause') {
+          const value = clause.childForFieldName('value');
+          if (value) out.push({ name: value.text, kind: 'extends' });
+        } else if (clause?.type === 'implements_clause') {
+          for (const t of clause.namedChildren) {
+            if (t?.type === 'type_identifier' || t?.type === 'generic_type' || t?.type === 'nested_type_identifier') {
+              out.push({ name: baseTypeName(t.text), kind: 'implements' });
+            }
+          }
+        } else if (clause?.type === 'identifier' || clause?.type === 'member_expression') {
+          // JS grammar: class_heritage wraps the value directly
+          out.push({ name: clause.text, kind: 'extends' });
+        }
+      }
+    } else if (child?.type === 'extends_type_clause') {
+      // interface X extends A, B
+      for (const t of child.namedChildren) {
+        if (t) out.push({ name: baseTypeName(t.text), kind: 'extends' });
+      }
+    } else if (child?.type === 'extends_clause') {
+      // JS grammar: class_heritage is just (extends_clause) without the wrapper
+      const value = child.childForFieldName('value') ?? child.namedChildren[0];
+      if (value) out.push({ name: baseTypeName(value.text), kind: 'extends' });
+    }
+  }
+  return out;
+}
+
+/** Strip generic arguments: `Base<T>` -> `Base`. */
+function baseTypeName(text: string): string {
+  const lt = text.indexOf('<');
+  return (lt === -1 ? text : text.slice(0, lt)).trim();
 }
 
 function reclassify(kind: SymbolKind, name: string, parentKind: SymbolKind | null): SymbolKind {
@@ -109,10 +164,14 @@ function extractImports(tree: Tree, _source: string): ExtractedImport[] {
   return imports;
 }
 
-function makeExtractor(id: 'typescript' | 'tsx' | 'javascript', query: string): LanguageExtractor {
-  return { id, symbolQuery: query, extractImports, isExported, reclassify };
+function makeExtractor(
+  id: 'typescript' | 'tsx' | 'javascript',
+  query: string,
+  occurrenceQuery: string,
+): LanguageExtractor {
+  return { id, symbolQuery: query, occurrenceQuery, extractImports, isExported, reclassify, bases };
 }
 
-export const typescriptExtractor = makeExtractor('typescript', TS_QUERY);
-export const tsxExtractor = makeExtractor('tsx', TS_QUERY);
-export const javascriptExtractor = makeExtractor('javascript', JS_QUERY);
+export const typescriptExtractor = makeExtractor('typescript', TS_QUERY, TS_OCCURRENCES);
+export const tsxExtractor = makeExtractor('tsx', TS_QUERY, TS_OCCURRENCES);
+export const javascriptExtractor = makeExtractor('javascript', JS_QUERY, SHARED_OCCURRENCES);

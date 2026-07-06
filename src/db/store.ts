@@ -3,8 +3,12 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { initSchema } from './schema.js';
 import type {
+  EdgeKind,
+  EdgeProvenance,
   FileExtraction,
   LanguageId,
+  OccurrenceRole,
+  SymbolBase,
   SymbolKind,
   SymbolRow,
 } from '../types.js';
@@ -100,8 +104,8 @@ export class Store {
 
       const insertSymbol = this.db.prepare(`
         INSERT INTO symbols (file_id, name, qualified_name, kind, start_line, start_col,
-                             end_line, end_col, signature, doc_comment, parent_symbol_id, is_exported)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+                             end_line, end_col, signature, doc_comment, parent_symbol_id, is_exported, bases)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
 
       // two passes: insert with null parents, then wire parent ids
       const ids: number[] = [];
@@ -120,6 +124,7 @@ export class Store {
           sym.docComment,
           null,
           sym.isExported ? 1 : 0,
+          sym.bases.length > 0 ? JSON.stringify(sym.bases) : null,
         );
         ids.push(Number(info.lastInsertRowid));
       });
@@ -257,6 +262,142 @@ export class Store {
     return row ? normalize([row])[0] : undefined;
   }
 
+  // ---------- resolution pass (bulk, called by the resolver) ----------
+
+  listImportRows(): ImportRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT i.id, i.file_id AS fileId, f.path, f.lang, i.specifier, i.names, i.resolved_file_id AS resolvedFileId
+         FROM imports i JOIN files f ON f.id = i.file_id`,
+      )
+      .all() as Array<Omit<ImportRow, 'names'> & { names: string }>;
+    return rows.map((r) => ({ ...r, names: JSON.parse(r.names) as string[] }));
+  }
+
+  applyImportResolutions(resolutions: Array<{ id: number; fileId: number | null }>): void {
+    const stmt = this.db.prepare(`UPDATE imports SET resolved_file_id = ? WHERE id = ?`);
+    const txn = this.db.transaction(() => {
+      for (const r of resolutions) stmt.run(r.fileId, r.id);
+    });
+    txn();
+  }
+
+  listSymbolsLite(): SymbolLite[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, file_id AS fileId, name, kind, parent_symbol_id AS parentSymbolId,
+                is_exported AS isExported, start_line AS startLine, start_col AS startCol,
+                end_line AS endLine, end_col AS endCol, bases
+         FROM symbols`,
+      )
+      .all() as Array<Omit<SymbolLite, 'bases' | 'isExported'> & { bases: string | null; isExported: number }>;
+    return rows.map((r) => ({
+      ...r,
+      isExported: Boolean(r.isExported),
+      bases: r.bases ? (JSON.parse(r.bases) as SymbolBase[]) : [],
+    }));
+  }
+
+  listOccurrenceRows(): OccurrenceRow[] {
+    return this.db
+      .prepare(
+        `SELECT id, file_id AS fileId, name, role, start_line AS startLine, start_col AS startCol
+         FROM occurrences`,
+      )
+      .all() as OccurrenceRow[];
+  }
+
+  applyOccurrenceResolutions(
+    resolutions: Array<{ id: number; symbolId: number; confidence: number }>,
+  ): void {
+    const stmt = this.db.prepare(
+      `UPDATE occurrences SET resolved_symbol_id = ?, confidence = ? WHERE id = ?`,
+    );
+    const txn = this.db.transaction(() => {
+      for (const r of resolutions) stmt.run(r.symbolId, r.confidence, r.id);
+    });
+    txn();
+  }
+
+  /** Drop all edges of one provenance (before a fresh resolution pass). */
+  clearEdges(provenance: EdgeProvenance): void {
+    this.db.prepare(`DELETE FROM edges WHERE provenance = ?`).run(provenance);
+  }
+
+  insertEdges(edges: EdgeInsert[]): void {
+    const stmt = this.db.prepare(
+      `INSERT INTO edges (src_symbol_id, dst_symbol_id, kind, confidence, provenance)
+       VALUES (?,?,?,?,?)
+       ON CONFLICT(src_symbol_id, dst_symbol_id, kind)
+       DO UPDATE SET confidence = MAX(confidence, excluded.confidence)`,
+    );
+    const txn = this.db.transaction(() => {
+      for (const e of edges) stmt.run(e.srcSymbolId, e.dstSymbolId, e.kind, e.confidence, e.provenance);
+    });
+    txn();
+  }
+
+  // ---------- graph queries (tools) ----------
+
+  /**
+   * References to a symbol: occurrences resolved to it, plus unresolved
+   * same-name occurrences as low-confidence candidates.
+   */
+  referencesTo(symbolId: number, name: string, limit: number, offset: number): ReferenceRow[] {
+    return this.db
+      .prepare(
+        `SELECT o.id, f.path, o.name, o.role, o.start_line AS startLine, o.start_col AS startCol,
+                o.resolved_symbol_id AS resolvedSymbolId, o.confidence
+         FROM occurrences o JOIN files f ON f.id = o.file_id
+         WHERE o.resolved_symbol_id = ? OR (o.resolved_symbol_id IS NULL AND o.name = ?)
+         ORDER BY (o.resolved_symbol_id IS NULL), f.path, o.start_line
+         LIMIT ? OFFSET ?`,
+      )
+      .all(symbolId, name, limit, offset) as ReferenceRow[];
+  }
+
+  /** Outgoing (srcSymbolId=from) or incoming (dstSymbolId=from) edges with symbol info. */
+  edgesFor(symbolId: number, direction: 'out' | 'in', kinds: EdgeKind[]): EdgeRow[] {
+    const joinCol = direction === 'out' ? 'e.dst_symbol_id' : 'e.src_symbol_id';
+    const whereCol = direction === 'out' ? 'e.src_symbol_id' : 'e.dst_symbol_id';
+    const placeholders = kinds.map(() => '?').join(',');
+    return this.db
+      .prepare(
+        `SELECT s.id AS symbolId, s.name, s.qualified_name AS qualifiedName, s.kind AS symbolKind,
+                f.path, s.start_line AS startLine, e.kind AS edgeKind, e.confidence, e.provenance
+         FROM edges e
+         JOIN symbols s ON s.id = ${joinCol}
+         JOIN files f ON f.id = s.file_id
+         WHERE ${whereCol} = ? AND e.kind IN (${placeholders})
+         ORDER BY e.confidence DESC, s.name`,
+      )
+      .all(symbolId, ...kinds) as EdgeRow[];
+  }
+
+  /** Files this file imports (resolved), plus unresolved/external specifiers. */
+  dependenciesOf(fileId: number): DependencyRow[] {
+    return this.db
+      .prepare(
+        `SELECT i.specifier, i.start_line AS startLine, f.path AS resolvedPath
+         FROM imports i LEFT JOIN files f ON f.id = i.resolved_file_id
+         WHERE i.file_id = ?
+         ORDER BY i.start_line`,
+      )
+      .all(fileId) as DependencyRow[];
+  }
+
+  /** Files that import this file. */
+  dependentsOf(fileId: number): Array<{ path: string; specifier: string; startLine: number }> {
+    return this.db
+      .prepare(
+        `SELECT f.path, i.specifier, i.start_line AS startLine
+         FROM imports i JOIN files f ON f.id = i.file_id
+         WHERE i.resolved_file_id = ?
+         ORDER BY f.path, i.start_line`,
+      )
+      .all(fileId) as Array<{ path: string; specifier: string; startLine: number }>;
+  }
+
   countsByLanguage(): Array<{ lang: LanguageId; files: number; symbols: number }> {
     return this.db
       .prepare(
@@ -267,14 +408,86 @@ export class Store {
       .all() as Array<{ lang: LanguageId; files: number; symbols: number }>;
   }
 
-  stats(): { files: number; symbols: number; imports: number } {
+  stats(): { files: number; symbols: number; imports: number; occurrences: number; edges: number } {
     const one = (sql: string) => (this.db.prepare(sql).get() as { n: number }).n;
     return {
       files: one(`SELECT COUNT(*) AS n FROM files`),
       symbols: one(`SELECT COUNT(*) AS n FROM symbols`),
       imports: one(`SELECT COUNT(*) AS n FROM imports`),
+      occurrences: one(`SELECT COUNT(*) AS n FROM occurrences`),
+      edges: one(`SELECT COUNT(*) AS n FROM edges`),
     };
   }
+}
+
+export interface ImportRow {
+  id: number;
+  fileId: number;
+  path: string;
+  lang: LanguageId;
+  specifier: string;
+  names: string[];
+  resolvedFileId: number | null;
+}
+
+export interface SymbolLite {
+  id: number;
+  fileId: number;
+  name: string;
+  kind: SymbolKind;
+  parentSymbolId: number | null;
+  isExported: boolean;
+  startLine: number;
+  startCol: number;
+  endLine: number;
+  endCol: number;
+  bases: SymbolBase[];
+}
+
+export interface OccurrenceRow {
+  id: number;
+  fileId: number;
+  name: string;
+  role: OccurrenceRole;
+  startLine: number;
+  startCol: number;
+}
+
+export interface EdgeInsert {
+  srcSymbolId: number;
+  dstSymbolId: number;
+  kind: EdgeKind;
+  confidence: number;
+  provenance: EdgeProvenance;
+}
+
+export interface ReferenceRow {
+  id: number;
+  path: string;
+  name: string;
+  role: OccurrenceRole;
+  startLine: number;
+  startCol: number;
+  resolvedSymbolId: number | null;
+  confidence: number | null;
+}
+
+export interface EdgeRow {
+  symbolId: number;
+  name: string;
+  qualifiedName: string;
+  symbolKind: SymbolKind;
+  path: string;
+  startLine: number;
+  edgeKind: EdgeKind;
+  confidence: number;
+  provenance: EdgeProvenance;
+}
+
+export interface DependencyRow {
+  specifier: string;
+  startLine: number;
+  resolvedPath: string | null;
 }
 
 function normalize(rows: SymbolRow[]): SymbolRow[] {

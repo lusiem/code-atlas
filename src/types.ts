@@ -34,6 +34,14 @@ export type SymbolKind =
   | 'macro'
   | 'impl';
 
+/** How a type relates to a base named in its declaration. */
+export type BaseKind = 'extends' | 'implements';
+
+export interface SymbolBase {
+  name: string;
+  kind: BaseKind;
+}
+
 /**
  * Position convention everywhere in this codebase and the database:
  * lines are 1-based (matches editors and `path:line` links), columns are 0-based.
@@ -51,6 +59,8 @@ export interface ExtractedSymbol {
   /** Index into the extraction's symbols array of the enclosing symbol, or null. */
   parentIndex: number | null;
   isExported: boolean;
+  /** Names this type declares as bases (extends/implements), unresolved. */
+  bases: SymbolBase[];
 }
 
 export interface ExtractedImport {
@@ -62,6 +72,10 @@ export interface ExtractedImport {
 }
 
 export type OccurrenceRole = 'ref' | 'call' | 'write' | 'import';
+
+export type EdgeKind = 'calls' | 'imports' | 'extends' | 'implements' | 'overrides' | 'attaches';
+
+export type EdgeProvenance = 'index' | 'lsp' | 'engine';
 
 export interface ExtractedOccurrence {
   name: string;

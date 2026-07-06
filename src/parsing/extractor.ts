@@ -2,9 +2,12 @@ import type { Node, Tree } from 'web-tree-sitter';
 import { compileQuery, parse } from './loader.js';
 import type {
   ExtractedImport,
+  ExtractedOccurrence,
   ExtractedSymbol,
   FileExtraction,
   LanguageId,
+  OccurrenceRole,
+  SymbolBase,
   SymbolKind,
 } from '../types.js';
 
@@ -19,13 +22,27 @@ import type {
 export interface LanguageExtractor {
   id: LanguageId;
   symbolQuery: string;
+  /**
+   * Optional query for identifier occurrences, captured as `@call`, `@write`,
+   * `@import` or `@ref`. When one node matches several patterns the strongest
+   * role wins (call > write > import > ref). Nodes that are definition names
+   * are dropped automatically.
+   */
+  occurrenceQuery?: string;
   /** Extract import statements by walking the tree (import shapes vary too much for one query convention). */
   extractImports?(tree: Tree, source: string): ExtractedImport[];
   isExported?(defNode: Node, nameText: string): boolean;
   /** Override doc-comment lookup (default: preceding // or /* sibling comments). */
   docComment?(defNode: Node, source: string): string | null;
   /** Adjust kind once the enclosing symbol is known (e.g. function in class -> method). */
-  reclassify?(kind: SymbolKind, name: string, parentKind: SymbolKind | null): SymbolKind;
+  reclassify?(
+    kind: SymbolKind,
+    name: string,
+    parentKind: SymbolKind | null,
+    parentName: string | null,
+  ): SymbolKind;
+  /** Base types (extends/implements) declared on this definition node, as raw names. */
+  bases?(defNode: Node): SymbolBase[];
 }
 
 interface RawSymbol extends ExtractedSymbol {
@@ -40,7 +57,10 @@ export async function extractFile(
   const tree = await parse(extractor.id, source);
   try {
     const query = await compileQuery(extractor.id, extractor.symbolQuery);
-    const byDefNode = new Map<number, { raw: RawSymbol; patternIndex: number }>();
+    // keyed by def node AND name node: one declaration can bind several names
+    // (`int x, y;`, `var a, b int`) — each name is its own symbol.
+    const byDefName = new Map<string, { raw: RawSymbol; patternIndex: number }>();
+    const nameNodeIds = new Set<number>();
 
     for (const match of query.matches(tree.rootNode)) {
       let defNode: Node | null = null;
@@ -56,11 +76,13 @@ export async function extractFile(
       }
       if (!defNode || !kind || !nameNode) continue;
 
-      const prev = byDefNode.get(defNode.id);
+      const key = `${defNode.id}:${nameNode.id}`;
+      const prev = byDefName.get(key);
       if (prev && prev.patternIndex <= match.patternIndex) continue;
 
       const name = nameNode.text;
-      byDefNode.set(defNode.id, {
+      nameNodeIds.add(nameNode.id);
+      byDefName.set(key, {
         patternIndex: match.patternIndex,
         raw: {
           name,
@@ -77,31 +99,68 @@ export async function extractFile(
             : precedingCommentDoc(defNode),
           parentIndex: null,
           isExported: extractor.isExported ? extractor.isExported(defNode, name) : false,
+          bases: extractor.bases ? extractor.bases(defNode) : [],
         },
       });
     }
 
-    const symbols = [...byDefNode.values()].map((v) => v.raw);
+    const symbols = [...byDefName.values()].map((v) => v.raw);
     symbols.sort((a, b) => a.startIndex - b.startIndex || b.endIndex - a.endIndex);
     assignParents(symbols);
 
     if (extractor.reclassify) {
       for (const sym of symbols) {
-        const parentKind = sym.parentIndex === null ? null : symbols[sym.parentIndex]!.kind;
-        sym.kind = extractor.reclassify(sym.kind, sym.name, parentKind);
+        const parent = sym.parentIndex === null ? null : symbols[sym.parentIndex]!;
+        sym.kind = extractor.reclassify(sym.kind, sym.name, parent?.kind ?? null, parent?.name ?? null);
       }
     }
 
     const imports = extractor.extractImports ? extractor.extractImports(tree, source) : [];
 
+    const occurrences = extractor.occurrenceQuery
+      ? await extractOccurrences(extractor, tree, nameNodeIds)
+      : [];
+
     return {
       symbols: symbols.map(({ startIndex: _s, endIndex: _e, ...sym }) => sym),
       imports,
-      occurrences: [],
+      occurrences,
     };
   } finally {
     tree.delete();
   }
+}
+
+const ROLE_PRIORITY: Record<OccurrenceRole, number> = { call: 0, write: 1, import: 2, ref: 3 };
+
+async function extractOccurrences(
+  extractor: LanguageExtractor,
+  tree: Tree,
+  defNameNodeIds: Set<number>,
+): Promise<ExtractedOccurrence[]> {
+  const query = await compileQuery(extractor.id, extractor.occurrenceQuery!);
+  const byNode = new Map<number, { node: Node; role: OccurrenceRole }>();
+  for (const match of query.matches(tree.rootNode)) {
+    for (const cap of match.captures) {
+      const role = cap.name as OccurrenceRole;
+      if (!(role in ROLE_PRIORITY)) continue;
+      if (defNameNodeIds.has(cap.node.id)) continue; // definition names are not usages
+      const prev = byNode.get(cap.node.id);
+      if (!prev || ROLE_PRIORITY[role] < ROLE_PRIORITY[prev.role]) {
+        byNode.set(cap.node.id, { node: cap.node, role });
+      }
+    }
+  }
+  const occurrences = [...byNode.values()].map(({ node, role }) => ({
+    name: node.text,
+    role,
+    startLine: node.startPosition.row + 1,
+    startCol: node.startPosition.column,
+    endLine: node.endPosition.row + 1,
+    endCol: node.endPosition.column,
+  }));
+  occurrences.sort((a, b) => a.startLine - b.startLine || a.startCol - b.startCol);
+  return occurrences;
 }
 
 /** Stack-based containment pass over symbols sorted by (startIndex asc, endIndex desc). */
@@ -111,12 +170,16 @@ function assignParents(symbols: RawSymbol[]): void {
     while (stack.length > 0 && symbols[stack[stack.length - 1]!]!.endIndex <= sym.startIndex) {
       stack.pop();
     }
-    const top = stack[stack.length - 1];
-    if (top !== undefined) {
-      const parent = symbols[top]!;
+    // sibling names bound by one declaration (`int x, y;`) share its range and
+    // must not nest under each other — skip same-range entries, then require
+    // containment of the first real candidate
+    for (let k = stack.length - 1; k >= 0; k--) {
+      const parent = symbols[stack[k]!]!;
+      if (parent.startIndex === sym.startIndex && parent.endIndex === sym.endIndex) continue;
       if (parent.startIndex <= sym.startIndex && parent.endIndex >= sym.endIndex) {
-        sym.parentIndex = top;
+        sym.parentIndex = stack[k]!;
       }
+      break;
     }
     stack.push(i);
   });
@@ -138,6 +201,9 @@ function buildSignature(defNode: Node, source: string): string | null {
   return collapsed.length > 300 ? `${collapsed.slice(0, 300)}…` : collapsed;
 }
 
+/** Grammars disagree on the comment node name (rust: line_comment/block_comment, kotlin: multiline_comment). */
+export const COMMENT_TYPES = new Set(['comment', 'line_comment', 'block_comment', 'multiline_comment']);
+
 /**
  * Default doc comment: contiguous preceding sibling comment(s).
  * Handles both a single block comment and a run of line comments.
@@ -152,6 +218,12 @@ function precedingCommentDoc(defNode: Node): string | null {
     'expression_statement',
     'decorated_definition',
     'labeled_statement',
+    // Go groups specs under declaration nodes; comments attach to the group
+    'type_declaration',
+    'const_declaration',
+    'var_declaration',
+    // C++ templates: comments attach to the template_declaration
+    'template_declaration',
   ]);
   let anchor: Node = defNode;
   while (anchor.parent && WRAPPERS.has(anchor.parent.type)) {
@@ -160,7 +232,7 @@ function precedingCommentDoc(defNode: Node): string | null {
   const pieces: string[] = [];
   let prev = anchor.previousNamedSibling;
   let expectedEndRow = anchor.startPosition.row - 1;
-  while (prev && prev.type === 'comment' && prev.endPosition.row >= expectedEndRow - 0) {
+  while (prev && COMMENT_TYPES.has(prev.type)) {
     if (prev.endPosition.row < expectedEndRow) break;
     pieces.unshift(prev.text);
     expectedEndRow = prev.startPosition.row - 1;

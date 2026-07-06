@@ -43,18 +43,23 @@ describe('MCP server end-to-end', () => {
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'ast_query',
+      'call_hierarchy',
+      'find_references',
+      'get_dependencies',
       'get_file_outline',
       'get_symbol_info',
       'index_status',
       'project_overview',
       'reindex',
       'search_symbols',
+      'trace_path',
+      'type_hierarchy',
     ]);
   });
 
   it('project_overview reports indexed languages', async () => {
     const text = await callText('project_overview');
-    expect(text).toContain('typescript: 3 files');
+    expect(text).toContain('typescript: 4 files');
     expect(text).toContain('index: ready');
   });
 
@@ -99,5 +104,49 @@ describe('MCP server end-to-end', () => {
   it('ast_query rejects bad queries gracefully', async () => {
     const text = await callText('ast_query', { pattern: '(nonsense_node) @x', lang: 'typescript' });
     expect(text).toContain('invalid query');
+  });
+
+  it('find_references lists resolved call sites', async () => {
+    const text = await callText('find_references', { name: 'add' });
+    expect(text).toContain('definition:');
+    expect(text).toMatch(/src\/calculator\.ts:\d+:\d+ call \(resolved/);
+  });
+
+  it('call_hierarchy walks callers transitively', async () => {
+    const text = await callText('call_hierarchy', { name: 'add', direction: 'in', depth: 2 });
+    expect(text).toContain('callers of function add');
+    expect(text).toContain('function calculate');
+    expect(text).toMatch(/\n {4}function report/); // caller-of-caller, indented deeper
+  });
+
+  it('call_hierarchy direction=out lists callees', async () => {
+    const text = await callText('call_hierarchy', { name: 'calculate', direction: 'out' });
+    expect(text).toContain('calls from function calculate');
+    expect(text).toContain('function add');
+    expect(text).toContain('function multiply');
+  });
+
+  it('type_hierarchy finds implementations', async () => {
+    const text = await callText('type_hierarchy', { name: 'Shape', direction: 'sub' });
+    expect(text).toContain('subtypes of interface Shape');
+    expect(text).toContain('class Circle');
+  });
+
+  it('get_dependencies works both directions', async () => {
+    const out = await callText('get_dependencies', { path: 'src/calculator.ts' });
+    expect(out).toContain('./math  ->  src/math.ts');
+    const inbound = await callText('get_dependencies', { path: 'src/math.ts', direction: 'in' });
+    expect(inbound).toContain('src/calculator.ts');
+  });
+
+  it('trace_path finds a multi-hop call chain', async () => {
+    const text = await callText('trace_path', { from_name: 'report', to_name: 'add' });
+    expect(text).toContain('call path (2 hops):');
+    expect(text).toMatch(/report[\s\S]*-> function calculate[\s\S]*-> function add/);
+  });
+
+  it('trace_path reports unreachable pairs honestly', async () => {
+    const text = await callText('trace_path', { from_name: 'add', to_name: 'report' });
+    expect(text).toContain('no call path');
   });
 });

@@ -5,6 +5,7 @@ import type { LanguageId } from '../types.js';
 import type { Store } from '../db/store.js';
 import { extractorFor } from '../parsing/registry.js';
 import { extractFile } from '../parsing/extractor.js';
+import { resolveWorkspace, type ResolveStats } from '../graph/resolver.js';
 import { scanWorkspace } from './scanner.js';
 
 export interface IndexProgress {
@@ -16,6 +17,8 @@ export interface IndexProgress {
   errors: Array<{ path: string; message: string }>;
   startedAt: number | null;
   finishedAt: number | null;
+  /** Result of the last cross-file resolution pass, if one has run. */
+  resolve: ResolveStats | null;
 }
 
 export class Indexer {
@@ -28,6 +31,7 @@ export class Indexer {
     errors: [],
     startedAt: null,
     finishedAt: null,
+    resolve: null,
   };
 
   private running: Promise<void> | null = null;
@@ -79,6 +83,12 @@ export class Indexer {
           this.store.removeFile(known.path);
           p.removedFiles++;
         }
+      }
+
+      // cross-file resolution: full pass whenever anything changed (Phase 3
+      // narrows this to affected files)
+      if (p.changedFiles > 0 || p.removedFiles > 0 || !this.store.getMeta('resolved_at')) {
+        p.resolve = resolveWorkspace(this.store, this.config.root);
       }
       p.state = 'ready';
     } catch (err) {

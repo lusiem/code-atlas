@@ -4,7 +4,7 @@ import type { Database } from 'better-sqlite3';
  * Bump when the schema or extractor output shape changes incompatibly;
  * the store drops and rebuilds the index when versions differ.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export function initSchema(db: Database): void {
   db.pragma('journal_mode = WAL');
@@ -66,21 +66,24 @@ function createAll(db: Database): void {
       signature        TEXT,
       doc_comment      TEXT,
       parent_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
-      is_exported      INTEGER NOT NULL DEFAULT 0
+      is_exported      INTEGER NOT NULL DEFAULT 0,
+      bases            TEXT                -- JSON [{name, kind}] of declared base types, or NULL
     );
     CREATE INDEX idx_symbols_file ON symbols(file_id);
     CREATE INDEX idx_symbols_name ON symbols(name);
     CREATE INDEX idx_symbols_qname ON symbols(qualified_name);
 
     CREATE TABLE imports (
-      id         INTEGER PRIMARY KEY,
-      file_id    INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-      specifier  TEXT NOT NULL,
-      names      TEXT NOT NULL,          -- JSON array
-      start_line INTEGER NOT NULL
+      id               INTEGER PRIMARY KEY,
+      file_id          INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+      specifier        TEXT NOT NULL,
+      names            TEXT NOT NULL,    -- JSON array
+      start_line       INTEGER NOT NULL,
+      resolved_file_id INTEGER REFERENCES files(id) ON DELETE SET NULL
     );
     CREATE INDEX idx_imports_file ON imports(file_id);
     CREATE INDEX idx_imports_spec ON imports(specifier);
+    CREATE INDEX idx_imports_resolved ON imports(resolved_file_id);
 
     CREATE TABLE occurrences (
       id                 INTEGER PRIMARY KEY,
@@ -96,6 +99,7 @@ function createAll(db: Database): void {
     );
     CREATE INDEX idx_occurrences_file ON occurrences(file_id);
     CREATE INDEX idx_occurrences_name ON occurrences(name);
+    CREATE INDEX idx_occurrences_resolved ON occurrences(resolved_symbol_id);
 
     CREATE TABLE edges (
       src_symbol_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,

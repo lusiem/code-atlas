@@ -1,15 +1,16 @@
 # code-atlas
 
-**Multi-language code intelligence MCP server** — gives Claude Code (and any MCP client) a structured view of your codebase instead of raw text: symbol search, file outlines, AST pattern queries, and (coming) call graphs, precise LSP-backed references, semantic search, and game-engine asset understanding.
+**Multi-language code intelligence MCP server** — gives Claude Code (and any MCP client) a structured view of your codebase instead of raw text: symbol search, file outlines, AST pattern queries, cross-file references, call/type hierarchies, import graphs — and (coming) precise LSP-backed answers, semantic search, and game-engine asset understanding.
 
-Instead of grepping and reading whole files, the model asks questions like *"outline this file"*, *"where is `parseConfig` defined?"*, or *"find every `await` inside a loop"* — and gets compact, token-efficient answers backed by a persistent tree-sitter index.
+Instead of grepping and reading whole files, the model asks questions like *"outline this file"*, *"who calls `parseConfig`?"*, *"how does the request handler reach the DB layer?"* — and gets compact, token-efficient answers backed by a persistent tree-sitter index.
 
-> **Status: early development.** Phase 1 (structural indexing core) is functional for TypeScript, TSX, JavaScript, and Python. See the roadmap below.
+> **Status: early development.** Structural indexing, cross-file resolution, and the call graph work across 11 languages. See the roadmap below.
 
 ## How it works
 
 ```
-your repo ──scan (gitignore-aware)──> tree-sitter parse ──> SQLite index (symbols, imports, FTS5)
+your repo ──scan (gitignore-aware)──> tree-sitter parse ──> SQLite index (symbols, imports,
+                                                             occurrences, call/type edges, FTS5)
                                                                    │
 Claude Code ◄──────────── MCP tools over stdio ────────────────────┘
 ```
@@ -47,18 +48,25 @@ node dist/index.js serve [--root <path>]   # MCP server on stdio
 | `get_file_outline` | What's in this file? Hierarchical signatures without reading source. |
 | `get_symbol_info` | Everything about one symbol (by id, position, or name) incl. docs and source. |
 | `ast_query` | Raw tree-sitter S-expression queries — structural search regex can't do. |
+| `find_references` | Who uses this symbol? Resolved usages first, name-matches as candidates. |
+| `call_hierarchy` | Who calls this / what does it call, as a tree with confidence scores. |
+| `type_hierarchy` | Supertypes and subtypes over extends/implements edges. |
+| `get_dependencies` | File import graph, both directions (imports / imported-by). |
+| `trace_path` | Shortest call chain between two symbols. |
 | `index_status` / `reindex` | Index health and manual refresh. |
+
+Cross-file answers are **structural**: heuristic import/name resolution tagged with a confidence
+score per edge (the LSP layer in phase 4 overlays exact results where a language server is available).
 
 ## Languages
 
-**Indexing today:** TypeScript, TSX, JavaScript, Python.
-**Grammar bundled, extractor pending:** C++, Rust, Go, Java, C#.
-**Planned:** C, Kotlin, GDScript (+ Godot `.tscn`, Unity YAML, Unreal reflection macros).
+**Indexing today:** TypeScript, TSX, JavaScript, Python, C, C++, Rust, Go, Java, Kotlin, C#.
+**Planned:** GDScript (+ Godot `.tscn`, Unity YAML, Unreal reflection macros) — phase 6.
 
 ## Roadmap
 
 1. ~~Structural core: scanner, SQLite+FTS5 index, TS/JS/Python extractors, first 6 tools~~ ✅
-2. All 11 language extractors, cross-file import resolution, call graph (`find_references`, `call_hierarchy`, `trace_path`)
+2. ~~All 11 language extractors, cross-file import resolution, call graph (`find_references`, `call_hierarchy`, `trace_path`)~~ ✅
 3. File watcher + incremental reindexing
 4. LSP layer (auto-acquired language servers; precise definitions/references/hover with graceful fallback)
 5. Local-embedding semantic search (`semantic_search`, hybrid BM25+vector)

@@ -13,7 +13,11 @@ export function createServer(ctx: AppContext): McpServer {
         'code-atlas indexes this workspace with tree-sitter and serves structured code intelligence. ' +
         'Start with project_overview. Use get_file_outline instead of reading whole files, ' +
         'search_symbols to locate definitions, get_symbol_info (include_source=true) to read one ' +
-        'definition, and ast_query for structural searches. The index refreshes via reindex.',
+        'definition, and ast_query for structural searches. For flow questions use find_references ' +
+        '(who uses this), call_hierarchy (who calls this / what does it call), type_hierarchy ' +
+        '(super/subtypes), get_dependencies (file import graph, both directions), and trace_path ' +
+        '(call chain between two symbols). Graph results are structural: each edge carries a ' +
+        'confidence score; treat low-confidence edges as hints. The index refreshes via reindex.',
     },
   );
   registerTools(server, ctx);

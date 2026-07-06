@@ -6,6 +6,7 @@ import { LANGUAGES } from '../languages.js';
 import { supportedLanguages } from '../parsing/registry.js';
 import { compileQuery, parse } from '../parsing/loader.js';
 import { formatSymbolLine, kindPrefix, paginationFooter, readSnippet } from './format.js';
+import { registerGraphTools } from './graph.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LanguageId, SymbolKind, SymbolRow } from '../types.js';
@@ -35,6 +36,8 @@ function normalizeRel(ctx: AppContext, p: string): string {
 }
 
 export function registerTools(server: McpServer, ctx: AppContext): void {
+  registerGraphTools(server, ctx);
+
   server.registerTool(
     'project_overview',
     {
@@ -51,7 +54,9 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
       const lines: string[] = [];
       lines.push(`workspace: ${config.root}`);
       lines.push(`index: ${indexer.progress.state}${indexer.progress.state === 'indexing' ? ` (${indexer.progress.processedFiles}/${indexer.progress.totalFiles})` : ''}`);
-      lines.push(`totals: ${stats.files} files, ${stats.symbols} symbols, ${stats.imports} imports`);
+      lines.push(
+        `totals: ${stats.files} files, ${stats.symbols} symbols, ${stats.imports} imports, ${stats.occurrences} occurrences, ${stats.edges} graph edges`,
+      );
       if (counts.length > 0) {
         lines.push('', 'languages:');
         for (const c of counts) lines.push(`  ${c.lang}: ${c.files} files, ${c.symbols} symbols`);
@@ -79,6 +84,13 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
       if (p.startedAt) {
         const took = (p.finishedAt ?? Date.now()) - p.startedAt;
         lines.push(`last sweep: started ${new Date(p.startedAt).toISOString()}, ${p.finishedAt ? `took ${took} ms` : `running for ${took} ms`}`);
+      }
+      if (p.resolve) {
+        lines.push(
+          `resolution: ${p.resolve.imports.resolved}/${p.resolve.imports.total} imports, ` +
+            `${p.resolve.occurrences.resolved}/${p.resolve.occurrences.total} occurrences, ` +
+            `${p.resolve.edges} edges`,
+        );
       }
       if (p.errors.length > 0) {
         lines.push('', `errors (${p.errors.length}):`);

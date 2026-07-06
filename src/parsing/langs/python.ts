@@ -1,7 +1,7 @@
 import type { Node, Tree } from 'web-tree-sitter';
 import type { LanguageExtractor } from '../extractor.js';
 import { cleanComment } from '../extractor.js';
-import type { ExtractedImport, SymbolKind } from '../../types.js';
+import type { ExtractedImport, SymbolBase, SymbolKind } from '../../types.js';
 
 const PY_QUERY = `
   (function_definition name: (identifier) @name) @def.function
@@ -9,6 +9,33 @@ const PY_QUERY = `
   (module (expression_statement (assignment left: (identifier) @name) @def.variable))
   (class_definition body: (block (expression_statement (assignment left: (identifier) @name) @def.field)))
 `;
+
+const PY_OCCURRENCES = `
+  (call function: (identifier) @call)
+  (call function: (attribute attribute: (identifier) @call))
+  (assignment left: (identifier) @write)
+  (assignment left: (attribute attribute: (identifier) @write))
+  (augmented_assignment left: (identifier) @write)
+  (identifier) @ref
+`;
+
+/** Base classes from `class Foo(Base, mixin.Other):`. */
+function bases(defNode: Node): SymbolBase[] {
+  if (defNode.type !== 'class_definition') return [];
+  const superclasses = defNode.childForFieldName('superclasses');
+  if (!superclasses) return [];
+  const out: SymbolBase[] = [];
+  for (const arg of superclasses.namedChildren) {
+    if (arg?.type === 'identifier' || arg?.type === 'attribute') {
+      out.push({ name: arg.text, kind: 'extends' });
+    } else if (arg?.type === 'subscript') {
+      // Generic[T] and friends — take the container name
+      const value = arg.childForFieldName('value');
+      if (value) out.push({ name: value.text, kind: 'extends' });
+    }
+  }
+  return out;
+}
 
 function docComment(defNode: Node, _source: string): string | null {
   if (defNode.type === 'function_definition' || defNode.type === 'class_definition') {
@@ -111,8 +138,10 @@ function extractImports(tree: Tree, _source: string): ExtractedImport[] {
 export const pythonExtractor: LanguageExtractor = {
   id: 'python',
   symbolQuery: PY_QUERY,
+  occurrenceQuery: PY_OCCURRENCES,
   extractImports,
   isExported,
   reclassify,
   docComment,
+  bases,
 };

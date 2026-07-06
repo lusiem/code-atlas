@@ -13,6 +13,7 @@ function sampleExtraction(): FileExtraction {
         docComment: 'Manages users.',
         parentIndex: null,
         isExported: true,
+        bases: [{ name: 'BaseService', kind: 'extends' as const }],
       },
       {
         name: 'findUser',
@@ -22,6 +23,7 @@ function sampleExtraction(): FileExtraction {
         docComment: null,
         parentIndex: 0,
         isExported: true,
+        bases: [],
       },
       {
         name: 'cache',
@@ -31,6 +33,7 @@ function sampleExtraction(): FileExtraction {
         docComment: null,
         parentIndex: 0,
         isExported: false,
+        bases: [],
       },
     ],
     imports: [{ specifier: './db', names: ['db'], startLine: 1 }],
@@ -95,7 +98,7 @@ describe('Store', () => {
     store = new Store(':memory:');
     store.replaceFile(meta, sampleExtraction());
     store.removeFile('src/user.ts');
-    expect(store.stats()).toEqual({ files: 0, symbols: 0, imports: 0 });
+    expect(store.stats()).toEqual({ files: 0, symbols: 0, imports: 0, occurrences: 0, edges: 0 });
     expect(store.searchSymbols('findUser', { limit: 10, offset: 0 })).toHaveLength(0);
   });
 
