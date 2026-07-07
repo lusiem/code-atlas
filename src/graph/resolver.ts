@@ -19,6 +19,98 @@ import type { EdgeKind, LanguageId } from '../types.js';
 
 const TYPE_KINDS = new Set(['class', 'interface', 'struct', 'trait', 'enum', 'type_alias', 'impl']);
 
+/**
+ * Names so ubiquitous in a language (builtins, stdlib container/prototype
+ * methods) that a cross-file heuristic match is almost certainly a false
+ * positive: a workspace defining its own `super`, `forEach`, or `as_bytes`
+ * would otherwise attract every such call in the codebase. These names still
+ * resolve through the explicit-import and same-file tiers, which carry real
+ * evidence; only the imported-files and workspace-global tiers are skipped.
+ */
+const JS_UBIQUITOUS = new Set([
+  'forEach', 'map', 'filter', 'reduce', 'find', 'findIndex', 'some', 'every', 'includes',
+  'indexOf', 'lastIndexOf', 'push', 'pop', 'shift', 'unshift', 'slice', 'splice', 'concat',
+  'join', 'keys', 'values', 'entries', 'has', 'get', 'set', 'add', 'delete', 'clear', 'sort',
+  'reverse', 'flat', 'flatMap', 'fill', 'toString', 'valueOf', 'hasOwnProperty', 'then',
+  'catch', 'finally', 'split', 'replace', 'replaceAll', 'trim', 'charAt', 'charCodeAt',
+  'substring', 'startsWith', 'endsWith', 'toLowerCase', 'toUpperCase', 'padStart', 'padEnd',
+  'repeat', 'match', 'test', 'exec', 'apply', 'call', 'bind',
+]);
+const JVM_UBIQUITOUS = new Set([
+  'toString', 'equals', 'hashCode', 'get', 'set', 'put', 'add', 'remove', 'size', 'length',
+  'isEmpty', 'contains', 'containsKey', 'iterator', 'next', 'hasNext', 'close', 'run', 'call',
+  'apply', 'invoke', 'compareTo', 'clone', 'copy', 'valueOf', 'name', 'values', 'forEach',
+  'stream', 'collect', 'map', 'filter', 'of', 'format', 'println', 'print', 'append',
+  'charAt', 'substring', 'split', 'replace', 'trim', 'toLowerCase', 'toUpperCase',
+  'startsWith', 'endsWith', 'indexOf', 'getBytes',
+]);
+const C_CPP_UBIQUITOUS = new Set([
+  'c_str', 'size', 'length', 'empty', 'begin', 'end', 'push_back', 'pop_back', 'insert',
+  'erase', 'clear', 'find', 'count', 'data', 'get', 'reset', 'release', 'at', 'front', 'back',
+  'first', 'second', 'str', 'append', 'substr', 'swap', 'resize', 'reserve', 'emplace_back',
+  'make_pair', 'make_unique', 'make_shared', 'move', 'forward', 'printf', 'sprintf',
+  'snprintf', 'fprintf', 'sscanf', 'malloc', 'calloc', 'realloc', 'free', 'memcpy', 'memset',
+  'memcmp', 'strlen', 'strcpy', 'strncpy', 'strcmp', 'strncmp', 'strdup', 'strchr', 'strstr',
+  'fopen', 'fclose', 'fread', 'fwrite', 'assert', 'abort', 'exit',
+]);
+const UBIQUITOUS_NAMES: Partial<Record<LanguageId, ReadonlySet<string>>> = {
+  typescript: JS_UBIQUITOUS,
+  tsx: JS_UBIQUITOUS,
+  javascript: JS_UBIQUITOUS,
+  python: new Set([
+    // builtins
+    'abs', 'all', 'any', 'ascii', 'bin', 'bool', 'bytearray', 'bytes', 'callable', 'chr',
+    'classmethod', 'compile', 'complex', 'delattr', 'dict', 'dir', 'divmod', 'enumerate',
+    'eval', 'exec', 'filter', 'float', 'format', 'frozenset', 'getattr', 'globals', 'hasattr',
+    'hash', 'hex', 'id', 'input', 'int', 'isinstance', 'issubclass', 'iter', 'len', 'list',
+    'locals', 'map', 'max', 'min', 'next', 'object', 'oct', 'open', 'ord', 'pow', 'print',
+    'property', 'range', 'repr', 'reversed', 'round', 'set', 'setattr', 'slice', 'sorted',
+    'staticmethod', 'str', 'sum', 'super', 'tuple', 'type', 'vars', 'zip',
+    // common container/str methods
+    'get', 'items', 'keys', 'values', 'update', 'append', 'extend', 'insert', 'remove',
+    'pop', 'clear', 'copy', 'count', 'index', 'sort', 'reverse', 'add', 'join', 'split',
+    'strip', 'startswith', 'endswith', 'replace', 'lower', 'upper', 'encode', 'decode',
+    'read', 'write', 'close',
+  ]),
+  go: new Set([
+    'append', 'cap', 'clear', 'close', 'complex', 'copy', 'delete', 'imag', 'len', 'make',
+    'max', 'min', 'new', 'panic', 'print', 'println', 'real', 'recover', 'String', 'Error',
+  ]),
+  rust: new Set([
+    'new', 'default', 'clone', 'len', 'is_empty', 'iter', 'into_iter', 'iter_mut', 'collect',
+    'map', 'and_then', 'or_else', 'unwrap', 'unwrap_or', 'unwrap_or_else', 'expect', 'push',
+    'pop', 'insert', 'remove', 'get', 'get_mut', 'contains', 'contains_key', 'as_bytes',
+    'as_str', 'as_ref', 'as_slice', 'to_string', 'to_owned', 'to_vec', 'borrow', 'borrow_mut',
+    'into', 'from', 'try_from', 'try_into', 'next', 'write', 'read', 'flush', 'fmt', 'eq',
+    'cmp', 'hash', 'drop',
+  ]),
+  java: JVM_UBIQUITOUS,
+  kotlin: new Set([
+    ...JVM_UBIQUITOUS,
+    'let', 'also', 'with', 'use', 'to', 'takeIf', 'takeUnless', 'lazy', 'listOf', 'mapOf',
+    'setOf', 'arrayOf', 'mutableListOf', 'mutableMapOf', 'mutableSetOf', 'emptyList',
+    'emptyMap', 'emptySet', 'requireNotNull', 'checkNotNull', 'require', 'check', 'error',
+  ]),
+  c: C_CPP_UBIQUITOUS,
+  cpp: C_CPP_UBIQUITOUS,
+  c_sharp: new Set([
+    'ToString', 'Equals', 'GetHashCode', 'GetType', 'Add', 'Remove', 'Contains', 'Clear',
+    'Count', 'Dispose', 'Close', 'Read', 'Write', 'WriteLine', 'Parse', 'TryParse', 'Format',
+    'Join', 'Split', 'Replace', 'Trim', 'ToLower', 'ToUpper', 'StartsWith', 'EndsWith',
+    'IndexOf', 'Substring', 'Append', 'ToList', 'ToArray', 'Select', 'Where', 'First',
+    'FirstOrDefault', 'Any', 'All', 'ContainsKey', 'TryGetValue', 'Invoke',
+    // BCL type names commonly hit by `new X(...)` / type refs
+    'List', 'Dictionary', 'HashSet', 'DateTime', 'DateTimeOffset', 'TimeSpan', 'Guid', 'Uri',
+    'Task', 'String', 'StringBuilder', 'Console', 'Convert', 'Math', 'Array', 'Exception',
+    'Stream', 'Object', 'Type', 'Action', 'Func', 'Tuple', 'Nullable',
+  ]),
+};
+
+function isUbiquitous(ws: WorkspaceIndex, fileId: number, name: string): boolean {
+  const lang = ws.fileIdToLang.get(fileId);
+  return lang !== undefined && (UBIQUITOUS_NAMES[lang]?.has(name) ?? false);
+}
+
 interface WorkspaceIndex {
   pathToFileId: Map<string, number>;
   fileIdToPath: Map<number, string>;
@@ -182,6 +274,9 @@ function resolveName(ws: WorkspaceIndex, fileId: number, name: string, isCall: b
   if (local.length === 1) return { symbol: local[0]!, confidence: 0.85 };
   if (local.length > 1) return { symbol: local[0]!, confidence: 0.7 };
 
+  // builtins/stdlib names: cross-file tiers are noise, not evidence
+  if (isUbiquitous(ws, fileId, name)) return null;
+
   const importedFiles = ws.importedFiles.get(fileId);
   if (importedFiles) {
     const fromImports: SymbolLite[] = [];
@@ -226,6 +321,7 @@ function resolveBase(ws: WorkspaceIndex, sym: SymbolLite, rawName: string): Hit 
     }
     if (fromImports.length > 0) return { symbol: lowestId(fromImports), confidence: 0.85 };
 
+    if (isUbiquitous(ws, sym.fileId, name)) continue;
     const global = typed((ws.globalByName.get(name) ?? []).filter((s) => s.isExported));
     if (global.length === 1) return { symbol: global[0]!, confidence: 0.7 };
     if (global.length > 1 && global.length <= 4) return { symbol: lowestId(global), confidence: 0.4 };

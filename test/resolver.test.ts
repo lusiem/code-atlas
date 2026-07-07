@@ -7,6 +7,7 @@ import { Store } from '../src/db/store.js';
 import { Indexer } from '../src/indexer/indexer.js';
 
 const FIXTURE_ROOT = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'ts-sample');
+const PY_FIXTURE_ROOT = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'py-sample');
 
 let store: Store;
 
@@ -82,5 +83,45 @@ describe('resolver', () => {
     const stats = store.stats();
     expect(stats.occurrences).toBeGreaterThan(0);
     expect(stats.edges).toBeGreaterThan(0);
+  });
+});
+
+describe('resolver: ubiquitous names', () => {
+  let pyStore: Store;
+
+  beforeAll(async () => {
+    const config = loadConfig(PY_FIXTURE_ROOT);
+    pyStore = new Store(':memory:');
+    const indexer = new Indexer(config, pyStore);
+    await indexer.run();
+  });
+
+  afterAll(() => {
+    pyStore?.close();
+    rmSync(join(PY_FIXTURE_ROOT, '.code-atlas'), { recursive: true, force: true });
+  });
+
+  it('does not attract builtin calls from other files (django `super` case)', () => {
+    const rows = pyStore.searchSymbols('super', { limit: 10, offset: 0 });
+    const superMethod = rows.find((r) => r.name === 'super' && r.kind === 'method')!;
+    expect(superMethod).toBeDefined();
+    const incoming = pyStore.edgesFor(superMethod.id, 'in', ['calls']);
+    // pkg/child.py calls builtin super() — that must NOT create an edge here
+    expect(incoming.map((e) => e.path)).toEqual(['pkg/nodes.py']);
+  });
+
+  it('still resolves ubiquitous names within the defining file', () => {
+    const rows = pyStore.searchSymbols('super', { limit: 10, offset: 0 });
+    const superMethod = rows.find((r) => r.name === 'super' && r.kind === 'method')!;
+    const incoming = pyStore.edgesFor(superMethod.id, 'in', ['calls']);
+    expect(incoming.some((e) => e.name === 'render')).toBe(true);
+    expect(incoming[0]!.confidence).toBeGreaterThanOrEqual(0.7);
+  });
+
+  it('still resolves non-ubiquitous names across files via imports', () => {
+    const rows = pyStore.searchSymbols('render', { limit: 10, offset: 0 });
+    const render = rows.find((r) => r.name === 'render' && r.kind === 'method')!;
+    const incoming = pyStore.edgesFor(render.id, 'in', ['calls']);
+    expect(incoming.some((e) => e.path === 'pkg/child.py')).toBe(true);
   });
 });
