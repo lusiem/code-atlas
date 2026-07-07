@@ -49,15 +49,20 @@ node dist/index.js serve [--root <path>] [--no-watch] # MCP server on stdio
 | `get_file_outline` | What's in this file? Hierarchical signatures without reading source. |
 | `get_symbol_info` | Everything about one symbol (by id, position, or name) incl. docs and source. |
 | `ast_query` | Raw tree-sitter S-expression queries — structural search regex can't do. |
-| `find_references` | Who uses this symbol? Resolved usages first, name-matches as candidates. |
-| `call_hierarchy` | Who calls this / what does it call, as a tree with confidence scores. |
+| `find_references` | Who uses this symbol? Exact (LSP) when available, else resolved usages first, name-matches as candidates. |
+| `go_to_definition` | Definition of the identifier at a position. LSP-exact with index fallback. |
+| `call_hierarchy` | Who calls this / what does it call, as a tree. `[lsp 1.00]` edges when a language server is running. |
 | `type_hierarchy` | Supertypes and subtypes over extends/implements edges. |
 | `get_dependencies` | File import graph, both directions (imports / imported-by). |
 | `trace_path` | Shortest call chain between two symbols. |
 | `index_status` / `reindex` | Index health and manual refresh. |
 
-Cross-file answers are **structural**: heuristic import/name resolution tagged with a confidence
-score per edge (the LSP layer in phase 4 overlays exact results where a language server is available).
+Cross-file answers are **LSP-first with a structural floor**: when a language server is available
+(found on PATH or auto-acquired into a per-user cache), references/definitions/hover/call
+hierarchies are exact and tagged `lsp`; everywhere else, heuristic import/name resolution answers
+with a confidence score per edge. Wave-1 servers: typescript-language-server, pyright, gopls,
+rust-analyzer, clangd (Java/Kotlin/C# are structural-only for now). Disable with `--no-lsp`;
+disable auto-download with `--no-download`.
 
 ## Languages
 
@@ -69,7 +74,7 @@ score per edge (the LSP layer in phase 4 overlays exact results where a language
 1. ~~Structural core: scanner, SQLite+FTS5 index, TS/JS/Python extractors, first 6 tools~~ ✅
 2. ~~All 11 language extractors, cross-file import resolution, call graph (`find_references`, `call_hierarchy`, `trace_path`)~~ ✅
 3. ~~File watcher + incremental reindexing (scoped re-resolution, schema migrations)~~ ✅
-4. LSP layer (auto-acquired language servers; precise definitions/references/hover with graceful fallback)
+4. ~~LSP layer wave 1 (auto-acquired ts-ls/pyright/gopls; PATH-detected rust-analyzer/clangd; precise references/definitions/hover/call hierarchy with graceful fallback)~~ ✅ — Java/Kotlin/C# servers and pinned binary downloads still to come
 5. Local-embedding semantic search (`semantic_search`, hybrid BM25+vector)
 6. Game-engine adapters: Godot scenes, Unity prefabs/GUIDs, Unreal reflection
 7. npm publish, docs, benchmarks

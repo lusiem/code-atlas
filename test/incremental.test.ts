@@ -94,4 +94,13 @@ describe('incremental reindex + scoped resolution', () => {
     await indexer.applyChanges(['b.ts']); // unchanged content
     expect(indexer.progress.resolve).toBe(before);
   });
+
+  it('recovers with a full pass when a prior session died before resolving', async () => {
+    // simulate: file rows committed (sets resolve_dirty) but the resolution
+    // pass never ran — e.g. the server was killed mid-batch
+    store.setMeta('resolve_dirty', '1');
+    await indexer.applyChanges(['b.ts']); // no content change, but stale flag set
+    expect(indexer.progress.resolve?.mode).toBe('full');
+    expect(store.getMeta('resolve_dirty')).toBe('0');
+  });
 });

@@ -5,25 +5,38 @@ import type { AppContext } from './context.js';
 import { Store } from './db/store.js';
 import { Indexer } from './indexer/indexer.js';
 import { Watcher } from './indexer/watcher.js';
+import { LspManager } from './lsp/manager.js';
 import { createServer } from './server.js';
 
-function parseArgs(argv: string[]): { command: string; root: string; watch: boolean } {
+function parseArgs(argv: string[]): {
+  command: string;
+  root: string;
+  watch: boolean;
+  lsp: boolean;
+  download: boolean;
+} {
   let command = 'serve';
   let root = process.cwd();
   let watch = true;
+  let lsp = true;
+  let download = true;
   const args = [...argv];
   if (args[0] && !args[0].startsWith('-')) command = args.shift()!;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--root' && args[i + 1]) root = args[++i]!;
     else if (args[i] === '--no-watch') watch = false;
+    else if (args[i] === '--no-lsp') lsp = false;
+    else if (args[i] === '--no-download') download = false;
   }
-  return { command, root, watch };
+  return { command, root, watch, lsp, download };
 }
 
 async function main(): Promise<void> {
-  const { command, root, watch } = parseArgs(process.argv.slice(2));
+  const { command, root, watch, lsp, download } = parseArgs(process.argv.slice(2));
   const config = loadConfig(root);
   if (!watch) config.watch = false;
+  if (!lsp) config.lsp.enabled = false;
+  if (!download) config.lsp.download = false;
   const store = new Store(config.dbPath);
   const indexer = new Indexer(config, store);
   const ctx: AppContext = { config, store, indexer };
@@ -46,6 +59,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  ctx.lsp = new LspManager(config.root, config.lsp);
+
   // stdout is the JSON-RPC channel — all logging goes to stderr
   const server = createServer(ctx);
   const transport = new StdioServerTransport();
@@ -55,6 +70,7 @@ async function main(): Promise<void> {
   process.stdin.on('close', () => {
     void (async () => {
       await ctx.watcher?.stop();
+      await ctx.lsp?.shutdown();
       store.close();
       process.exit(0);
     })();
@@ -65,7 +81,9 @@ async function main(): Promise<void> {
     const stats = store.stats();
     console.error(`[code-atlas] index ready: ${stats.files} files, ${stats.symbols} symbols`);
     if (config.watch) {
-      ctx.watcher = new Watcher(config, indexer);
+      ctx.watcher = new Watcher(config, indexer, {
+        onBatch: (paths) => ctx.lsp?.filesChanged(paths),
+      });
       ctx.watcher.start();
       console.error('[code-atlas] watching for changes');
     }

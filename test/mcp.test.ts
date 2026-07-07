@@ -48,6 +48,7 @@ describe('MCP server end-to-end', () => {
       'get_dependencies',
       'get_file_outline',
       'get_symbol_info',
+      'go_to_definition',
       'index_status',
       'project_overview',
       'reindex',

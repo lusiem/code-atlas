@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { relative, sep } from 'node:path';
 import type { AppContext } from '../context.js';
 import type { EdgeKind, SymbolRow } from '../types.js';
+import { lspCallHierarchy, lspReferences, relFromUri } from '../lsp/overlay.js';
 import { formatSymbolLine, paginationFooter } from './format.js';
 
 function text(s: string) {
@@ -118,8 +119,9 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
     {
       title: 'Find references',
       description:
-        'All indexed usages of a symbol: resolved references first (with confidence), then unresolved ' +
-        'same-name occurrences as candidates. Structural index data — precise LSP references arrive in a later phase.',
+        'Usages of a symbol. Uses the exact language server when one is available (provenance lsp), ' +
+        'falling back to indexed usages: resolved references first (with confidence), then unresolved ' +
+        'same-name occurrences as candidates.',
       inputSchema: {
         ...symbolArgs,
         role: z.enum(['ref', 'call', 'write', 'import']).optional().describe('only usages of this kind'),
@@ -131,12 +133,23 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
       const found = findSymbol(ctx, args);
       if (!found.ok) return text(found.message);
       const sym = found.sym;
-      let refs = ctx.store.referencesTo(sym.id, sym.name, args.limit + 1, args.offset);
-      if (args.role) refs = refs.filter((r) => r.role === args.role);
       const lines = [
         `definition: ${formatSymbolLine(sym)}`,
         '',
       ];
+
+      // exact answer from the language server when available
+      const precise = args.role ? null : await lspReferences(ctx, sym);
+      if (precise && precise.length > 0) {
+        const shown = precise.slice(args.offset, args.offset + args.limit);
+        for (const r of shown) lines.push(`${r.path}:${r.line}:${r.col} (lsp)`);
+        return text(
+          lines.join('\n') + paginationFooter(shown.length, args.limit, args.offset),
+        );
+      }
+
+      let refs = ctx.store.referencesTo(sym.id, sym.name, args.limit + 1, args.offset);
+      if (args.role) refs = refs.filter((r) => r.role === args.role);
       if (refs.length === 0) {
         lines.push('no references found');
         return text(lines.join('\n'));
@@ -159,7 +172,8 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
       title: 'Call hierarchy',
       description:
         'Who calls this symbol (direction=in) or what it calls (direction=out), as a tree up to `depth` levels. ' +
-        'Each edge carries a confidence score from structural resolution.',
+        'Uses the exact language server when available ([lsp 1.00] edges), structural index otherwise ' +
+        '(confidence per edge).',
       inputSchema: {
         ...symbolArgs,
         direction: z.enum(['in', 'out']).default('in'),
@@ -170,10 +184,66 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
       const found = findSymbol(ctx, args);
       if (!found.ok) return text(found.message);
       const sym = found.sym;
-      const lines = renderHierarchy(ctx, sym.id, args.direction === 'in' ? 'in' : 'out', CALL_KINDS, args.depth, 25);
+      const direction = args.direction === 'in' ? 'in' : 'out';
       const header = `${args.direction === 'in' ? 'callers of' : 'calls from'} ${sym.kind} ${sym.qualifiedName} (${sym.path}:${sym.startLine}) #${sym.id}`;
+
+      const precise = await lspCallHierarchy(ctx, sym, direction, args.depth, 25);
+      if (precise && precise.length > 0) return text(`${header}\n${precise.join('\n')}`);
+
+      const lines = renderHierarchy(ctx, sym.id, direction, CALL_KINDS, args.depth, 25);
       if (lines.length === 0) return text(`${header}\n(none found in the index)`);
       return text(`${header}\n${lines.join('\n')}`);
+    },
+  );
+
+  server.registerTool(
+    'go_to_definition',
+    {
+      title: 'Go to definition',
+      description:
+        'Definition site of the identifier at a file position. Uses the exact language server when ' +
+        'available, falling back to the structural index (resolved occurrence at that position).',
+      inputSchema: {
+        path: z.string().describe('file path, relative to the workspace root'),
+        line: z.number().int().min(1).describe('1-based line of the identifier'),
+        col: z.number().int().min(0).optional().describe('0-based column (defaults to first identifier on the line)'),
+      },
+    },
+    async (args) => {
+      const rel = normalizeRel(ctx, args.path);
+      const file = ctx.store.getFileByPath(rel);
+      if (!file) return text(`file not indexed: ${rel}`);
+      const occ = ctx.store.occurrenceAt(file.id, args.line, args.col ?? null);
+
+      const client = await ctx.lsp?.clientFor(file.lang);
+      if (client) {
+        const col = args.col ?? occ?.startCol ?? 0;
+        const locs = await client.definition(rel, { line: args.line - 1, character: col });
+        if (locs && locs.length > 0) {
+          const lines = locs.map((loc) => {
+            const target = relFromUri(ctx, loc.uri);
+            return `${target ?? loc.uri}:${loc.range.start.line + 1}:${loc.range.start.character} (lsp)`;
+          });
+          return text(`definition of ${occ?.name ?? `${rel}:${args.line}`}:\n${lines.join('\n')}`);
+        }
+      }
+
+      if (!occ) return text(`no identifier found at ${rel}:${args.line}`);
+      if (occ.resolvedSymbolId !== null) {
+        const target = ctx.store.getSymbolById(occ.resolvedSymbolId);
+        if (target) {
+          return text(
+            `definition of ${occ.name}:\n${formatSymbolLine(target)} (index ${occ.confidence?.toFixed(2) ?? '?'})`,
+          );
+        }
+      }
+      const candidates = ctx.store
+        .searchSymbols(occ.name, { limit: 5, offset: 0 })
+        .filter((r) => r.name === occ.name);
+      if (candidates.length === 0) return text(`"${occ.name}" is unresolved and has no indexed definition`);
+      return text(
+        `"${occ.name}" is unresolved; candidates:\n${candidates.map((r) => formatSymbolLine(r)).join('\n')}`,
+      );
     },
   );
 

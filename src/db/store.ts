@@ -97,6 +97,9 @@ export class Store {
     extraction: FileExtraction,
   ): number {
     const txn = this.db.transaction(() => {
+      // mark the graph stale in the same transaction; only a completed
+      // resolution pass clears it (crash recovery for the sweep that follows)
+      this.setMeta('resolve_dirty', '1');
       const existing = this.getFileByPath(meta.path);
       if (existing) this.deleteFileRows(existing.id);
 
@@ -173,6 +176,7 @@ export class Store {
     const existing = this.getFileByPath(path);
     if (!existing) return;
     const txn = this.db.transaction(() => {
+      this.setMeta('resolve_dirty', '1');
       this.deleteFileRows(existing.id);
       this.db.prepare(`DELETE FROM files WHERE id=?`).run(existing.id);
     });
@@ -317,6 +321,33 @@ export class Store {
       .all() as OccurrenceRow[];
   }
 
+  /**
+   * The identifier occurrence at (or nearest on) a line; with a column, the
+   * occurrence spanning it wins, else the closest start on that line.
+   */
+  occurrenceAt(
+    fileId: number,
+    line: number,
+    col: number | null,
+  ): { name: string; startCol: number; resolvedSymbolId: number | null; confidence: number | null } | undefined {
+    const rows = this.db
+      .prepare(
+        `SELECT name, start_col AS startCol, end_col AS endCol,
+                resolved_symbol_id AS resolvedSymbolId, confidence
+         FROM occurrences WHERE file_id = ? AND start_line = ? ORDER BY start_col`,
+      )
+      .all(fileId, line) as Array<{
+      name: string; startCol: number; endCol: number;
+      resolvedSymbolId: number | null; confidence: number | null;
+    }>;
+    if (rows.length === 0) return undefined;
+    if (col === null) return rows[0];
+    return (
+      rows.find((r) => r.startCol <= col && col <= r.endCol) ??
+      rows.reduce((a, b) => (Math.abs(a.startCol - col) <= Math.abs(b.startCol - col) ? a : b))
+    );
+  }
+
   listOccurrenceRowsForFiles(fileIds: Iterable<number>): OccurrenceRow[] {
     const out: OccurrenceRow[] = [];
     const stmt = this.db.prepare(
@@ -395,6 +426,31 @@ export class Store {
     txn();
   }
 
+  /**
+   * Commit one resolution pass atomically: clear the stale resolutions/edges
+   * (scoped or all-index) and write the new ones in a single transaction, so
+   * a crash mid-pass can never leave the graph half-cleared.
+   */
+  applyResolutionPass(
+    scope: Iterable<number> | null,
+    occResolutions: Array<{ id: number; symbolId: number; confidence: number }>,
+    edges: EdgeInsert[],
+  ): void {
+    const scopeIds = scope ? [...scope] : null;
+    const txn = this.db.transaction(() => {
+      if (scopeIds) {
+        this.clearResolutionsForFiles(scopeIds);
+        this.clearIndexEdgesFromFiles(scopeIds);
+      } else {
+        this.clearEdges('index');
+      }
+      this.applyOccurrenceResolutions(occResolutions);
+      this.insertEdges(edges);
+      this.setMeta('resolve_dirty', '0');
+    });
+    txn();
+  }
+
   /** Drop all edges of one provenance (before a fresh resolution pass). */
   clearEdges(provenance: EdgeProvenance): void {
     this.db.prepare(`DELETE FROM edges WHERE provenance = ?`).run(provenance);
@@ -405,7 +461,9 @@ export class Store {
       `INSERT INTO edges (src_symbol_id, dst_symbol_id, kind, confidence, provenance)
        VALUES (?,?,?,?,?)
        ON CONFLICT(src_symbol_id, dst_symbol_id, kind)
-       DO UPDATE SET confidence = MAX(confidence, excluded.confidence)`,
+       DO UPDATE SET
+         provenance = CASE WHEN excluded.confidence >= confidence THEN excluded.provenance ELSE provenance END,
+         confidence = MAX(confidence, excluded.confidence)`,
     );
     const txn = this.db.transaction(() => {
       for (const e of edges) stmt.run(e.srcSymbolId, e.dstSymbolId, e.kind, e.confidence, e.provenance);

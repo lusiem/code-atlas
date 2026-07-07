@@ -251,9 +251,6 @@ export async function resolveWorkspace(
       }
     }
   }
-  if (scope) store.clearResolutionsForFiles(scope);
-  store.applyOccurrenceResolutions(occResolutions);
-
   // 4. declared bases -> extends/implements edges
   for (const sym of symbols) {
     if (scope && !scope.has(sym.fileId)) continue;
@@ -270,9 +267,9 @@ export async function resolveWorkspace(
     }
   }
 
-  if (scope) store.clearIndexEdgesFromFiles(scope);
-  else store.clearEdges('index');
-  store.insertEdges(edges);
+  // atomic: clear stale state and write the new pass in one transaction so a
+  // crash mid-pass can never strand the graph half-cleared
+  store.applyResolutionPass(scope ?? null, occResolutions, edges);
   store.setMeta('resolved_at', String(Date.now()));
 
   return {

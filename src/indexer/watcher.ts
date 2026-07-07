@@ -43,12 +43,12 @@ export class Watcher {
   /** dir relPath -> matcher for that dir's .gitignore (null = no .gitignore). */
   private readonly igCache = new Map<string, Ignore | null>();
   private readonly debounceMs: number;
-  private readonly onBatch: ((files: number) => void) | undefined;
+  private readonly onBatch: ((paths: string[]) => void) | undefined;
 
   constructor(
     private readonly config: AtlasConfig,
     private readonly indexer: Indexer,
-    opts: { debounceMs?: number; onBatch?: (files: number) => void } = {},
+    opts: { debounceMs?: number; onBatch?: (paths: string[]) => void } = {},
   ) {
     this.debounceMs = opts.debounceMs ?? 300;
     this.onBatch = opts.onBatch;
@@ -137,7 +137,7 @@ export class Watcher {
         this.status.batches++;
         this.status.lastBatchAt = Date.now();
         this.status.lastBatchFiles = fullSweep ? -1 : paths.length;
-        this.onBatch?.(paths.length);
+        this.onBatch?.(paths);
       });
     await this.flushing;
   }

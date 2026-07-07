@@ -8,6 +8,13 @@ const configFileSchema = z
     exclude: z.array(z.string()).default([]),
     maxFileBytes: z.number().int().positive().default(2_000_000),
     watch: z.boolean().default(true),
+    lsp: z
+      .object({
+        enabled: z.boolean().default(true),
+        download: z.boolean().default(true),
+      })
+      .partial()
+      .default({}),
   })
   .partial();
 
@@ -22,6 +29,8 @@ export interface AtlasConfig {
   maxFileBytes: number;
   /** Watch the workspace and reindex on change while serving (default true). */
   watch: boolean;
+  /** LSP layer: precise answers overlaid on the structural index. */
+  lsp: { enabled: boolean; download: boolean };
   /** Absolute path of the SQLite index. */
   dbPath: string;
   /** Directory holding the index and other per-project state. */
@@ -48,6 +57,10 @@ export function loadConfig(rootInput: string): AtlasConfig {
     exclude: fileValues.exclude ?? [],
     maxFileBytes: fileValues.maxFileBytes ?? 2_000_000,
     watch: fileValues.watch ?? true,
+    lsp: {
+      enabled: fileValues.lsp?.enabled ?? true,
+      download: fileValues.lsp?.download ?? true,
+    },
     stateDir,
     dbPath: join(stateDir, 'index.db'),
   };

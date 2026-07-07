@@ -27,6 +27,11 @@ export interface IndexProgress {
 interface Batch {
   /** True when a resolution pass already exists (incremental is possible). */
   warm: boolean;
+  /**
+   * True when a previous session committed file rows but crashed before its
+   * resolution pass — blast radius unknown, so this batch resolves fully.
+   */
+  staleResolve: boolean;
   changedFileIds: number[];
   /** Symbol names defined by the pre-change version of changed/removed files. */
   oldSymbolNames: Set<string>;
@@ -86,6 +91,7 @@ export class Indexer {
   private newBatch(): Batch {
     return {
       warm: Boolean(this.store.getMeta('resolved_at')),
+      staleResolve: this.store.getMeta('resolve_dirty') === '1',
       changedFileIds: [],
       oldSymbolNames: new Set(),
       importersOfRemoved: new Set(),
@@ -182,10 +188,10 @@ export class Indexer {
   /** Run resolution when the batch touched anything (or nothing is resolved yet). */
   private async resolveBatch(batch: Batch): Promise<void> {
     const dirty = batch.changedFileIds.length > 0 || batch.removed > 0;
-    if (!dirty && batch.warm) return;
+    if (!dirty && batch.warm && !batch.staleResolve) return;
 
     let scope: Set<number> | undefined;
-    if (batch.warm && dirty) {
+    if (batch.warm && dirty && !batch.staleResolve) {
       scope =
         affectedFilesFor(this.store, {
           changedFileIds: batch.changedFileIds,

@@ -5,6 +5,7 @@ import type { AppContext } from '../context.js';
 import { LANGUAGES } from '../languages.js';
 import { supportedLanguages } from '../parsing/registry.js';
 import { compileQuery, parse } from '../parsing/loader.js';
+import { lspHoverFor } from '../lsp/overlay.js';
 import { formatSymbolLine, kindPrefix, paginationFooter, readSnippet } from './format.js';
 import { registerGraphTools } from './graph.js';
 import { readFileSync } from 'node:fs';
@@ -101,6 +102,7 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
               (w.pending > 0 ? `, ${w.pending} paths pending` : '')
           : 'watcher: off (refresh via reindex or restart)',
       );
+      if (ctx.lsp) lines.push(...ctx.lsp.statusLines());
       if (p.errors.length > 0) {
         lines.push('', `errors (${p.errors.length}):`);
         for (const e of p.errors.slice(0, 10)) lines.push(`  ${e.path}: ${e.message}`);
@@ -252,6 +254,8 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
         if (parent) lines.push(`container: ${parent.kind} ${parent.qualifiedName} #${parent.id}`);
       }
       if (sym.docComment) lines.push('', sym.docComment);
+      const hover = await lspHoverFor(ctx, sym);
+      if (hover) lines.push('', `--- hover (lsp) ---`, hover);
       if (args.include_source) {
         lines.push('', readSnippet(config.root, sym.path, sym.startLine, sym.endLine, 60));
       }
