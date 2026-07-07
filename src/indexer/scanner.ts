@@ -15,7 +15,7 @@ export interface ScannedFile {
 }
 
 /** Directories that are never worth indexing, regardless of gitignore. */
-const DEFAULT_IGNORES = [
+export const DEFAULT_IGNORES = [
   '.git/',
   '.hg/',
   '.svn/',

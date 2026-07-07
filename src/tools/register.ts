@@ -87,11 +87,20 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
       }
       if (p.resolve) {
         lines.push(
-          `resolution: ${p.resolve.imports.resolved}/${p.resolve.imports.total} imports, ` +
-            `${p.resolve.occurrences.resolved}/${p.resolve.occurrences.total} occurrences, ` +
-            `${p.resolve.edges} edges`,
+          `last resolution (${p.resolve.mode}, ${p.resolve.files} files): ` +
+            `${p.resolve.imports.resolved}/${p.resolve.imports.total} imports, ` +
+            `${p.resolve.occurrences.resolved}/${p.resolve.occurrences.total} occurrences considered, ` +
+            `${p.resolve.edges} edges written`,
         );
       }
+      const w = ctx.watcher?.status;
+      lines.push(
+        w?.watching
+          ? `watcher: active, ${w.batches} batches applied` +
+              (w.lastBatchAt ? `, last at ${new Date(w.lastBatchAt).toISOString()}` : '') +
+              (w.pending > 0 ? `, ${w.pending} paths pending` : '')
+          : 'watcher: off (refresh via reindex or restart)',
+      );
       if (p.errors.length > 0) {
         lines.push('', `errors (${p.errors.length}):`);
         for (const e of p.errors.slice(0, 10)) lines.push(`  ${e.path}: ${e.message}`);

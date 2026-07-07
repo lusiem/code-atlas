@@ -1,7 +1,7 @@
 import DatabaseCtor, { type Database } from 'better-sqlite3';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { initSchema } from './schema.js';
+import { prepareSchema, rebuildSchema } from './schema.js';
 import type {
   EdgeKind,
   EdgeProvenance,
@@ -48,7 +48,17 @@ export class Store {
       writeFileSync(join(dir, '.gitignore'), '*\n');
     }
     this.db = new DatabaseCtor(dbPath);
-    initSchema(this.db);
+    if (prepareSchema(this.db) === 'rebuild') {
+      if (dbPath === ':memory:') {
+        rebuildSchema(this.db);
+      } else {
+        // deleting the file is instant; DROP TABLE on a big index is minutes
+        this.db.close();
+        for (const suffix of ['', '-wal', '-shm']) rmSync(dbPath + suffix, { force: true });
+        this.db = new DatabaseCtor(dbPath);
+        prepareSchema(this.db);
+      }
+    }
   }
 
   close(): void {
@@ -305,6 +315,72 @@ export class Store {
          FROM occurrences`,
       )
       .all() as OccurrenceRow[];
+  }
+
+  listOccurrenceRowsForFiles(fileIds: Iterable<number>): OccurrenceRow[] {
+    const out: OccurrenceRow[] = [];
+    const stmt = this.db.prepare(
+      `SELECT id, file_id AS fileId, name, role, start_line AS startLine, start_col AS startCol
+       FROM occurrences WHERE file_id = ?`,
+    );
+    for (const id of fileIds) out.push(...(stmt.all(id) as OccurrenceRow[]));
+    return out;
+  }
+
+  /** Distinct symbol names defined in the given files. */
+  symbolNamesInFiles(fileIds: Iterable<number>): Set<string> {
+    const out = new Set<string>();
+    const stmt = this.db.prepare(`SELECT DISTINCT name FROM symbols WHERE file_id = ?`);
+    for (const id of fileIds) {
+      for (const row of stmt.all(id) as Array<{ name: string }>) out.add(row.name);
+    }
+    return out;
+  }
+
+  /** Files whose imports resolve into any of the given files. */
+  filesImporting(fileIds: Iterable<number>): Set<number> {
+    const out = new Set<number>();
+    const stmt = this.db.prepare(
+      `SELECT DISTINCT file_id AS fileId FROM imports WHERE resolved_file_id = ?`,
+    );
+    for (const id of fileIds) {
+      for (const row of stmt.all(id) as Array<{ fileId: number }>) out.add(row.fileId);
+    }
+    return out;
+  }
+
+  /** Files containing at least one occurrence of any of the given names. */
+  filesWithOccurrenceNames(names: Iterable<string>): Set<number> {
+    const out = new Set<number>();
+    const stmt = this.db.prepare(
+      `SELECT DISTINCT file_id AS fileId FROM occurrences WHERE name = ?`,
+    );
+    for (const name of names) {
+      for (const row of stmt.all(name) as Array<{ fileId: number }>) out.add(row.fileId);
+    }
+    return out;
+  }
+
+  clearResolutionsForFiles(fileIds: Iterable<number>): void {
+    const stmt = this.db.prepare(
+      `UPDATE occurrences SET resolved_symbol_id = NULL, confidence = NULL WHERE file_id = ?`,
+    );
+    const txn = this.db.transaction(() => {
+      for (const id of fileIds) stmt.run(id);
+    });
+    txn();
+  }
+
+  /** Delete index-provenance edges whose source symbol lives in the given files. */
+  clearIndexEdgesFromFiles(fileIds: Iterable<number>): void {
+    const stmt = this.db.prepare(
+      `DELETE FROM edges WHERE provenance = 'index'
+         AND src_symbol_id IN (SELECT id FROM symbols WHERE file_id = ?)`,
+    );
+    const txn = this.db.transaction(() => {
+      for (const id of fileIds) stmt.run(id);
+    });
+    txn();
   }
 
   applyOccurrenceResolutions(

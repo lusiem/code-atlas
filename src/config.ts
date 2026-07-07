@@ -7,6 +7,7 @@ const configFileSchema = z
     include: z.array(z.string()).default([]),
     exclude: z.array(z.string()).default([]),
     maxFileBytes: z.number().int().positive().default(2_000_000),
+    watch: z.boolean().default(true),
   })
   .partial();
 
@@ -19,6 +20,8 @@ export interface AtlasConfig {
   exclude: string[];
   /** Files larger than this are skipped (generated bundles, minified JS). */
   maxFileBytes: number;
+  /** Watch the workspace and reindex on change while serving (default true). */
+  watch: boolean;
   /** Absolute path of the SQLite index. */
   dbPath: string;
   /** Directory holding the index and other per-project state. */
@@ -44,6 +47,7 @@ export function loadConfig(rootInput: string): AtlasConfig {
     include: fileValues.include ?? [],
     exclude: fileValues.exclude ?? [],
     maxFileBytes: fileValues.maxFileBytes ?? 2_000_000,
+    watch: fileValues.watch ?? true,
     stateDir,
     dbPath: join(stateDir, 'index.db'),
   };

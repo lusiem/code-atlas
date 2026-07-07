@@ -127,23 +127,63 @@ interface WorkspaceIndex {
 }
 
 export interface ResolveStats {
+  mode: 'full' | 'incremental';
+  /** Files whose occurrences/bases were (re)resolved this pass. */
+  files: number;
   imports: { total: number; resolved: number };
   occurrences: { total: number; resolved: number };
   edges: number;
 }
 
-export function resolveWorkspace(store: Store, rootDir: string): ResolveStats {
+/**
+ * Compute the set of files whose resolutions a batch of changes can affect,
+ * or null when the blast radius is large enough that a full pass is cheaper:
+ * the changed files, importers of changed/removed files, and any file with an
+ * occurrence of a name defined in the old or new version of the changed files
+ * (covers global-tier resolutions and edges into replaced symbols).
+ */
+export function affectedFilesFor(
+  store: Store,
+  opts: {
+    changedFileIds: Iterable<number>;
+    importersOfRemoved: Iterable<number>;
+    oldSymbolNames: ReadonlySet<string>;
+  },
+): Set<number> | null {
+  const affected = new Set<number>(opts.changedFileIds);
+  for (const id of store.filesImporting(affected)) affected.add(id);
+  for (const id of opts.importersOfRemoved) affected.add(id);
+
+  const names = new Set(opts.oldSymbolNames);
+  for (const n of store.symbolNamesInFiles(opts.changedFileIds)) names.add(n);
+  if (names.size > 4000) return null;
+  for (const id of store.filesWithOccurrenceNames(names)) affected.add(id);
+
+  // fall back to a full pass only when it would actually be expensive:
+  // below the floor a scoped pass costs the same and keeps stats meaningful
+  const totalFiles = store.listFiles().length;
+  if (affected.size > Math.max(50, totalFiles / 2)) return null;
+  return affected;
+}
+
+export async function resolveWorkspace(
+  store: Store,
+  rootDir: string,
+  scope?: Set<number>,
+): Promise<ResolveStats> {
   const files = store.listFiles();
   const pathToFileId = new Map(files.map((f) => [f.path, f.id]));
   const fileIdToPath = new Map(files.map((f) => [f.id, f.path]));
   const fileIdToLang = new Map(files.map((f) => [f.id, f.lang]));
 
-  // 1. imports -> files
+  // 1. imports -> files (always global: a new file can satisfy anyone's import)
   const importRows = store.listImportRows();
   const goModule = readGoModule(rootDir);
   const resolutions: Array<{ id: number; fileId: number | null }> = [];
   for (const imp of importRows) {
     const target = resolveImport(imp, pathToFileId, goModule);
+    // a changed import target invalidates that file's occurrence resolutions
+    if (scope && target !== imp.resolvedFileId) scope.add(imp.fileId);
     resolutions.push({ id: imp.id, fileId: target });
     imp.resolvedFileId = target;
   }
@@ -185,11 +225,16 @@ export function resolveWorkspace(store: Store, rootDir: string): ResolveStats {
     targets.add(imp.resolvedFileId);
   }
 
-  // 3. occurrences -> symbols
-  const occurrences = store.listOccurrenceRows();
+  // 3. occurrences -> symbols (scoped to affected files when incremental)
+  const occurrences = scope
+    ? store.listOccurrenceRowsForFiles(scope)
+    : store.listOccurrenceRows();
   const occResolutions: Array<{ id: number; symbolId: number; confidence: number }> = [];
   const edges: EdgeInsert[] = [];
+  let processed = 0;
   for (const occ of occurrences) {
+    // yield periodically so a large pass doesn't starve MCP requests
+    if (++processed % 20000 === 0) await new Promise((r) => setImmediate(r));
     const hit = resolveName(ws, occ.fileId, occ.name, occ.role === 'call');
     if (!hit) continue;
     occResolutions.push({ id: occ.id, symbolId: hit.symbol.id, confidence: hit.confidence });
@@ -206,10 +251,12 @@ export function resolveWorkspace(store: Store, rootDir: string): ResolveStats {
       }
     }
   }
+  if (scope) store.clearResolutionsForFiles(scope);
   store.applyOccurrenceResolutions(occResolutions);
 
   // 4. declared bases -> extends/implements edges
   for (const sym of symbols) {
+    if (scope && !scope.has(sym.fileId)) continue;
     for (const base of sym.bases) {
       const hit = resolveBase(ws, sym, base.name);
       if (!hit) continue;
@@ -223,11 +270,14 @@ export function resolveWorkspace(store: Store, rootDir: string): ResolveStats {
     }
   }
 
-  store.clearEdges('index');
+  if (scope) store.clearIndexEdgesFromFiles(scope);
+  else store.clearEdges('index');
   store.insertEdges(edges);
   store.setMeta('resolved_at', String(Date.now()));
 
   return {
+    mode: scope ? 'incremental' : 'full',
+    files: scope ? scope.size : files.length,
     imports: {
       total: importRows.length,
       resolved: importRows.filter((i) => i.resolvedFileId !== null).length,

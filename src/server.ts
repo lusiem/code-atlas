@@ -1,9 +1,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AppContext } from './context.js';
 import { registerTools } from './tools/register.js';
+import { PACKAGE_VERSION } from './version.js';
 
 export const SERVER_NAME = 'code-atlas';
-export const SERVER_VERSION = '0.1.0';
+export const SERVER_VERSION = PACKAGE_VERSION;
 
 export function createServer(ctx: AppContext): McpServer {
   const server = new McpServer(
@@ -17,7 +18,8 @@ export function createServer(ctx: AppContext): McpServer {
         '(who uses this), call_hierarchy (who calls this / what does it call), type_hierarchy ' +
         '(super/subtypes), get_dependencies (file import graph, both directions), and trace_path ' +
         '(call chain between two symbols). Graph results are structural: each edge carries a ' +
-        'confidence score; treat low-confidence edges as hints. The index refreshes via reindex.',
+        'confidence score; treat low-confidence edges as hints. The index refreshes automatically ' +
+        'while serving (file watcher) and manually via reindex.',
     },
   );
   registerTools(server, ctx);

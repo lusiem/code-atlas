@@ -1,27 +1,80 @@
 import type { Database } from 'better-sqlite3';
+import { PACKAGE_VERSION } from '../version.js';
 
 /**
- * Bump when the schema or extractor output shape changes incompatibly;
- * the store drops and rebuilds the index when versions differ.
+ * Bump when the schema changes. On mismatch the store first tries the
+ * stepwise MIGRATIONS below and falls back to a drop-and-rebuild (the index
+ * is a cache — a rebuild only costs one full sweep).
  */
 export const SCHEMA_VERSION = 2;
 
-export function initSchema(db: Database): void {
+/**
+ * In-place migration from version N to N+1, run inside a transaction.
+ * Leave a version out to force drop-and-rebuild for upgrades crossing it.
+ */
+const MIGRATIONS: Record<number, (db: Database) => void> = {};
+
+/**
+ * Identity of the code that produced the index rows. Extractor and resolver
+ * output changes between releases even when the schema doesn't, so a version
+ * bump invalidates all indexed data (schema stays, next sweep reindexes).
+ */
+export const INDEX_GENERATION = PACKAGE_VERSION;
+
+export function configurePragmas(db: Database): void {
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
+}
+
+/**
+ * Bring the schema up to date. Returns 'ready' when the db is usable, or
+ * 'rebuild' when it must be recreated from scratch — the caller should then
+ * delete the database FILE and reopen rather than call rebuildSchema: DROP
+ * TABLE on a multi-GB-of-pages index takes minutes in SQLite, unlinking is
+ * instant. rebuildSchema exists for :memory: databases, where dropping is
+ * cheap and there is no file to delete.
+ */
+export function prepareSchema(db: Database): 'ready' | 'rebuild' {
+  configurePragmas(db);
 
   const row = db
     .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='meta'`)
     .get() as { name: string } | undefined;
-  if (row) {
-    const version = db.prepare(`SELECT value FROM meta WHERE key='schema_version'`).get() as
-      | { value: string }
-      | undefined;
-    if (version && Number(version.value) === SCHEMA_VERSION) return;
-    dropAll(db);
+  if (!row) {
+    createAll(db);
+    return 'ready';
   }
+
+  const version = db.prepare(`SELECT value FROM meta WHERE key='schema_version'`).get() as
+    | { value: string }
+    | undefined;
+  let current = version ? Number(version.value) : NaN;
+  while (current < SCHEMA_VERSION && MIGRATIONS[current]) {
+    const migrate = MIGRATIONS[current]!;
+    const next = current + 1;
+    db.transaction(() => {
+      migrate(db);
+      db.prepare(`UPDATE meta SET value = ? WHERE key='schema_version'`).run(String(next));
+    })();
+    current = next;
+  }
+  if (current === SCHEMA_VERSION && generationMatches(db)) return 'ready';
+  // schema too old to migrate, or rows written by a different release
+  return 'rebuild';
+}
+
+/** In-place drop-and-recreate; only sensible for :memory: databases. */
+export function rebuildSchema(db: Database): void {
+  dropAll(db);
   createAll(db);
+}
+
+function generationMatches(db: Database): boolean {
+  const row = db.prepare(`SELECT value FROM meta WHERE key='index_generation'`).get() as
+    | { value: string }
+    | undefined;
+  return row?.value === INDEX_GENERATION;
 }
 
 function dropAll(db: Database): void {
@@ -128,4 +181,5 @@ function createAll(db: Database): void {
   db.prepare(`INSERT INTO meta (key, value) VALUES ('schema_version', ?)`).run(
     String(SCHEMA_VERSION),
   );
+  db.prepare(`INSERT INTO meta (key, value) VALUES ('index_generation', ?)`).run(INDEX_GENERATION);
 }

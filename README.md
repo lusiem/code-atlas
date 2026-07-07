@@ -16,6 +16,7 @@ Claude Code ◄──────────── MCP tools over stdio ──�
 ```
 
 - **Persistent index** at `<repo>/.code-atlas/index.db` (self-gitignored), incrementally refreshed by content hash.
+- **Live** — a gitignore-aware file watcher reindexes saves within a debounce beat and re-resolves only the affected files (`--no-watch` or `"watch": false` to disable).
 - **Zero config** — point it at a repo root and it works. Optional `code-atlas.json` for include/exclude tweaks.
 - **Everything local** — your code never leaves your machine.
 
@@ -35,8 +36,8 @@ The server indexes the current working directory; pass `--root <path>` to overri
 ### CLI
 
 ```sh
-node dist/index.js index [--root <path>]   # one-shot index build (debugging / warm-up)
-node dist/index.js serve [--root <path>]   # MCP server on stdio
+node dist/index.js index [--root <path>]              # one-shot index build (debugging / warm-up)
+node dist/index.js serve [--root <path>] [--no-watch] # MCP server on stdio
 ```
 
 ## Tools
@@ -67,7 +68,7 @@ score per edge (the LSP layer in phase 4 overlays exact results where a language
 
 1. ~~Structural core: scanner, SQLite+FTS5 index, TS/JS/Python extractors, first 6 tools~~ ✅
 2. ~~All 11 language extractors, cross-file import resolution, call graph (`find_references`, `call_hierarchy`, `trace_path`)~~ ✅
-3. File watcher + incremental reindexing
+3. ~~File watcher + incremental reindexing (scoped re-resolution, schema migrations)~~ ✅
 4. LSP layer (auto-acquired language servers; precise definitions/references/hover with graceful fallback)
 5. Local-embedding semantic search (`semantic_search`, hybrid BM25+vector)
 6. Game-engine adapters: Godot scenes, Unity prefabs/GUIDs, Unreal reflection
