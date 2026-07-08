@@ -57,6 +57,9 @@ node dist/index.js serve [--root <path>] [--no-watch] [--no-lsp] [--no-embedding
 | `type_hierarchy` | Supertypes and subtypes over extends/implements edges. |
 | `get_dependencies` | File import graph, both directions (imports / imported-by). |
 | `trace_path` | Shortest call chain between two symbols. |
+| `get_scene_structure` | Godot scene node tree with attached scripts, instanced sub-scenes, and signal connections (handlers resolved to symbols). |
+| `find_asset_references` | Which scenes/prefabs use this script? Reverse lookup across Godot res:// paths, Unity GUIDs (via .meta), and Unreal modules. |
+| `search_reflection` | All `UPROPERTY(Replicated)`, `[SerializeField]`, `@export` vars, signals — engine reflection markers across the workspace. |
 | `index_status` / `reindex` | Index health and manual refresh. |
 
 Cross-file answers are **LSP-first with a structural floor**: when a language server is available
@@ -77,8 +80,14 @@ of background time, once; after that only edited symbols re-embed. `"embeddings"
 
 ## Languages
 
-**Indexing today:** TypeScript, TSX, JavaScript, Python, C, C++, Rust, Go, Java, Kotlin, C#.
-**Planned:** GDScript (+ Godot `.tscn`, Unity YAML, Unreal reflection macros) — phase 6.
+**Indexing today:** TypeScript, TSX, JavaScript, Python, C, C++, Rust, Go, Java, Kotlin, C#, GDScript.
+
+**Game engines:** engine assets index alongside code — Godot `.tscn`/`.tres` scenes (node trees,
+script attachments, signal connections, autoloads; `res://` resolved per `project.godot`, monorepos
+of many projects included), Unity `.unity`/`.prefab`/`.asset` + `.meta` GUID maps (MonoBehaviour →
+C# class links, serialized references), and Unreal `.uproject`/`.uplugin`/`Build.cs` module graphs
+plus reflection-macro search over headers. Binary formats (`.uasset`, Blueprints, `.scn`) are out
+of scope by design.
 
 ## Roadmap
 
@@ -87,7 +96,7 @@ of background time, once; after that only edited symbols re-embed. `"embeddings"
 3. ~~File watcher + incremental reindexing (scoped re-resolution, schema migrations)~~ ✅
 4. ~~LSP layer wave 1 (auto-acquired ts-ls/pyright/gopls; PATH-detected rust-analyzer/clangd; precise references/definitions/hover/call hierarchy with graceful fallback)~~ ✅ — Java/Kotlin/C# servers and pinned binary downloads still to come
 5. ~~Local-embedding semantic search (`semantic_search`, hybrid BM25+vector reciprocal-rank fusion, lazy model download, incremental re-embedding)~~ ✅
-6. Game-engine adapters: Godot scenes, Unity prefabs/GUIDs, Unreal reflection
+6. ~~Game-engine adapters: GDScript grammar (vendored wasm build), Godot scenes/autoloads, Unity prefabs/GUIDs, Unreal module graph + reflection search~~ ✅ — Godot editor LSP (TCP 6005) still to come
 7. npm publish, docs, benchmarks
 
 ## Development

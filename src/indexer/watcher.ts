@@ -3,6 +3,7 @@ import { relative } from 'node:path';
 import { watch, type FSWatcher } from 'chokidar';
 import ignoreFactory, { type Ignore } from 'ignore';
 import type { AtlasConfig } from '../config.js';
+import { assetForPath } from '../engines/detect.js';
 import { languageForPath } from '../languages.js';
 import { CONFIG_FILE_NAME } from '../config.js';
 import type { Indexer } from './indexer.js';
@@ -100,7 +101,7 @@ export class Watcher {
       this.needsFullSweep = true;
       this.igCache.clear();
     } else {
-      if (!languageForPath(rel)?.grammarAvailable) return;
+      if (!languageForPath(rel)?.grammarAvailable && !assetForPath(rel)) return;
       if (this.isIgnoredRel(rel, false)) return;
       this.pending.add(rel);
     }

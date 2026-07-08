@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import ignoreFactory, { type Ignore } from 'ignore';
 import type { AtlasConfig } from '../config.js';
+import { assetForPath, type AssetInfo } from '../engines/detect.js';
 import { languageForPath } from '../languages.js';
 import type { LanguageId } from '../types.js';
 
@@ -12,6 +13,19 @@ export interface ScannedFile {
   lang: LanguageId;
   size: number;
   mtimeMs: number;
+}
+
+export interface ScannedAsset {
+  relPath: string;
+  absPath: string;
+  info: AssetInfo;
+  size: number;
+  mtimeMs: number;
+}
+
+export interface ScanResult {
+  files: ScannedFile[];
+  assets: ScannedAsset[];
 }
 
 /** Directories that are never worth indexing, regardless of gitignore. */
@@ -66,12 +80,14 @@ interface MatcherFrame {
  * Walks the workspace applying .gitignore semantics (including nested .gitignore
  * files) plus built-in and configured excludes. Returns indexable source files.
  */
-export function scanWorkspace(config: AtlasConfig): ScannedFile[] {
+export function scanWorkspace(config: AtlasConfig): ScanResult {
   const rootIg = ignoreFactory().add(DEFAULT_IGNORES).add(config.exclude);
   const results: ScannedFile[] = [];
+  const assets: ScannedAsset[] = [];
   walk(config.root, '', [{ base: '', ig: rootIg }]);
   results.sort((a, b) => (a.relPath < b.relPath ? -1 : 1));
-  return results;
+  assets.sort((a, b) => (a.relPath < b.relPath ? -1 : 1));
+  return { files: results, assets };
 
   function isIgnored(frames: MatcherFrame[], relPath: string, isDir: boolean): boolean {
     const probe = isDir ? `${relPath}/` : relPath;
@@ -108,7 +124,8 @@ export function scanWorkspace(config: AtlasConfig): ScannedFile[] {
         walk(join(absDir, entry.name), rel, localFrames);
       } else if (entry.isFile()) {
         const lang = languageForPath(entry.name);
-        if (!lang || !lang.grammarAvailable) continue;
+        const asset = assetForPath(entry.name);
+        if ((!lang || !lang.grammarAvailable) && !asset) continue;
         if (isIgnored(localFrames, rel, false)) continue;
         const abs = join(absDir, entry.name);
         let stat;
@@ -118,13 +135,18 @@ export function scanWorkspace(config: AtlasConfig): ScannedFile[] {
           continue;
         }
         if (stat.size > config.maxFileBytes) continue;
-        results.push({
-          relPath: rel,
-          absPath: abs,
-          lang: lang.id,
-          size: stat.size,
-          mtimeMs: stat.mtimeMs,
-        });
+        if (lang?.grammarAvailable) {
+          results.push({
+            relPath: rel,
+            absPath: abs,
+            lang: lang.id,
+            size: stat.size,
+            mtimeMs: stat.mtimeMs,
+          });
+        }
+        if (asset) {
+          assets.push({ relPath: rel, absPath: abs, info: asset, size: stat.size, mtimeMs: stat.mtimeMs });
+        }
       }
     }
   }

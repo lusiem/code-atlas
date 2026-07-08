@@ -13,6 +13,7 @@ import { rustExtractor } from './langs/rust.js';
 import { goExtractor } from './langs/go.js';
 import { javaExtractor } from './langs/java.js';
 import { csharpExtractor } from './langs/csharp.js';
+import { gdscriptExtractor } from './langs/gdscript.js';
 
 const extractors = new Map<LanguageId, LanguageExtractor>([
   ['typescript', typescriptExtractor],
@@ -26,6 +27,7 @@ const extractors = new Map<LanguageId, LanguageExtractor>([
   ['go', goExtractor],
   ['java', javaExtractor],
   ['c_sharp', csharpExtractor],
+  ['gdscript', gdscriptExtractor],
 ]);
 
 export function extractorFor(lang: LanguageId): LanguageExtractor | undefined {

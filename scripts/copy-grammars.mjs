@@ -2,8 +2,9 @@
 //   1. @vscode/tree-sitter-wasm — prebuilt, ABI-compatible with our
 //      web-tree-sitter (verified by the test suite)
 //   2. pinned GitHub release assets, verified against SHA-256 checksums below
-//
-// Still missing (Phase 6): gdscript, godot_resource — see docs/grammars.md.
+//   3. grammars-vendored/ — wasm we build ourselves (no upstream distribution),
+//      committed to the repo with provenance in grammars-vendored/README.md
+// (.tscn/.tres/scene formats are hand-parsed — no grammar needed.)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -44,6 +45,15 @@ mkdirSync(destDir, { recursive: true });
 for (const [id, stem] of Object.entries(VSCODE_GRAMMARS)) {
   copyFileSync(join(srcDir, `tree-sitter-${stem}.wasm`), join(destDir, `tree-sitter-${id}.wasm`));
   console.log(`copied tree-sitter-${id}.wasm`);
+}
+
+const vendoredDir = join(root, 'grammars-vendored');
+if (existsSync(vendoredDir)) {
+  const { readdirSync } = await import('node:fs');
+  for (const file of readdirSync(vendoredDir).filter((f) => f.endsWith('.wasm'))) {
+    copyFileSync(join(vendoredDir, file), join(destDir, file));
+    console.log(`copied ${file} (vendored)`);
+  }
 }
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');

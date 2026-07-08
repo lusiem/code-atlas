@@ -7,6 +7,7 @@ import { rustExtractor } from '../src/parsing/langs/rust.js';
 import { goExtractor } from '../src/parsing/langs/go.js';
 import { javaExtractor } from '../src/parsing/langs/java.js';
 import { csharpExtractor } from '../src/parsing/langs/csharp.js';
+import { gdscriptExtractor } from '../src/parsing/langs/gdscript.js';
 import type { ExtractedSymbol, FileExtraction } from '../src/types.js';
 
 function index(result: FileExtraction): Map<string, ExtractedSymbol> {
@@ -539,5 +540,103 @@ describe('kotlin extractor', () => {
     expect(calls).toContain('println');
     const writes = result.occurrences.filter((o) => o.role === 'write').map((o) => o.name);
     expect(writes).toContain('z');
+  });
+});
+
+const GD_SRC = `## Player controller doc.
+class_name Player
+extends "res://base/actor.gd"
+
+signal health_changed(new_health, old)
+
+@export var speed: float = 300.0
+@onready var sprite = $Sprite2D
+
+enum State { IDLE, RUNNING = 2, DEAD }
+
+const SAVE_PATH := "user://save.dat"
+
+func _init():
+    pass
+
+## Applies damage and emits health_changed.
+func take_damage(amount: int) -> void:
+    var local_thing = amount - 1
+    health_changed.emit(local_thing)
+    sprite.play("hurt")
+    speed = 0
+    move_and_slide()
+
+func _get_speed():
+    return preload("res://ui/hud.gd").scale(speed)
+
+class Inner extends Node:
+    var inner_field := 3
+    const INNER_C = 1
+    func helper():
+        return inner_field
+`;
+
+describe('gdscript extractor', () => {
+  const resultP = extractFile(gdscriptExtractor, GD_SRC);
+
+  it('extracts class_name, signals, enums, exported vars, consts', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    const player = byName.get('Player')!;
+    expect(player.kind).toBe('class');
+    expect(player.docComment).toBe('Player controller doc.');
+    expect(byName.get('health_changed')!.kind).toBe('signal');
+    expect(byName.get('State')!.kind).toBe('enum');
+    expect(byName.get('RUNNING')!.kind).toBe('enum_member');
+    expect(byName.get('SAVE_PATH')!.kind).toBe('constant');
+    const speed = byName.get('speed')!;
+    expect(speed.kind).toBe('variable');
+    expect(speed.signature).toContain('@export');
+    expect(byName.get('sprite')!.signature).toContain('@onready');
+    // function-local vars are not symbols
+    expect(byName.has('local_thing')).toBe(false);
+  });
+
+  it('handles _init constructor, inner classes, methods, privacy', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('_init')!.kind).toBe('constructor');
+    expect(byName.get('take_damage')!.kind).toBe('function');
+    expect(byName.get('take_damage')!.docComment).toBe('Applies damage and emits health_changed.');
+    const inner = byName.get('Inner')!;
+    expect(inner.kind).toBe('class');
+    expect(inner.bases).toEqual([{ name: 'Node', kind: 'extends' }]);
+    const helper = byName.get('helper')!;
+    expect(helper.kind).toBe('method');
+    expect(parentOf(result, helper)).toBe('Inner');
+    expect(byName.get('inner_field')!.kind).toBe('field');
+    expect(byName.get('INNER_C')!.kind).toBe('constant');
+    expect(byName.get('_get_speed')!.isExported).toBe(false);
+    expect(byName.get('take_damage')!.isExported).toBe(true);
+  });
+
+  it('collects res:// imports from extends and preload', async () => {
+    const result = await resultP;
+    expect(result.imports).toContainEqual({
+      specifier: 'res://base/actor.gd',
+      names: [],
+      startLine: 3,
+    });
+    expect(result.imports).toContainEqual({
+      specifier: 'res://ui/hud.gd',
+      names: [],
+      startLine: 26,
+    });
+  });
+
+  it('captures calls and writes', async () => {
+    const result = await resultP;
+    const calls = result.occurrences.filter((o) => o.role === 'call').map((o) => o.name);
+    expect(calls).toContain('emit');
+    expect(calls).toContain('play');
+    expect(calls).toContain('move_and_slide');
+    const writes = result.occurrences.filter((o) => o.role === 'write').map((o) => o.name);
+    expect(writes).toContain('speed');
   });
 });

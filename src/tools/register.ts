@@ -8,6 +8,7 @@ import { compileQuery, parse } from '../parsing/loader.js';
 import { semanticSearch } from '../embeddings/search.js';
 import { lspHoverFor } from '../lsp/overlay.js';
 import { formatSymbolLine, kindPrefix, paginationFooter, readSnippet } from './format.js';
+import { registerEngineTools } from './engines.js';
 import { registerGraphTools } from './graph.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -39,6 +40,7 @@ function normalizeRel(ctx: AppContext, p: string): string {
 
 export function registerTools(server: McpServer, ctx: AppContext): void {
   registerGraphTools(server, ctx);
+  registerEngineTools(server, ctx);
 
   server.registerTool(
     'project_overview',
@@ -63,9 +65,20 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
         lines.push('', 'languages:');
         for (const c of counts) lines.push(`  ${c.lang}: ${c.files} files, ${c.symbols} symbols`);
       }
+      const assetStats = store.assetStats();
+      if (assetStats.length > 0) {
+        const byEngine = new Map<string, string[]>();
+        for (const a of assetStats) {
+          const list = byEngine.get(a.engine) ?? [];
+          list.push(`${a.n} ${a.kind}`);
+          byEngine.set(a.engine, list);
+        }
+        lines.push('', 'engine assets:');
+        for (const [engine, parts] of byEngine) lines.push(`  ${engine}: ${parts.join(', ')}`);
+      }
       const unsupported = LANGUAGES.filter((l) => !l.grammarAvailable).map((l) => l.id);
       lines.push('', `extractors active: ${supportedLanguages().join(', ')}`);
-      lines.push(`not yet supported (planned): ${unsupported.join(', ')}`);
+      if (unsupported.length > 0) lines.push(`not yet supported (planned): ${unsupported.join(', ')}`);
       return text(lines.join('\n'));
     },
   );

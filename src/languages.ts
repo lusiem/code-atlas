@@ -19,7 +19,7 @@ export const LANGUAGES: LanguageInfo[] = [
   { id: 'java', extensions: ['.java'], grammarAvailable: true },
   { id: 'kotlin', extensions: ['.kt', '.kts'], grammarAvailable: true },
   { id: 'c_sharp', extensions: ['.cs'], grammarAvailable: true },
-  { id: 'gdscript', extensions: ['.gd'], grammarAvailable: false },
+  { id: 'gdscript', extensions: ['.gd'], grammarAvailable: true },
 ];
 
 const byExtension = new Map<string, LanguageInfo>();

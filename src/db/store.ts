@@ -689,6 +689,107 @@ export class Store {
     }
     return top.sort((a, b) => b.score - a.score);
   }
+
+  // ---------- engine assets ----------
+
+  getAssetByPath(path: string): AssetRecord | undefined {
+    return this.db
+      .prepare(`SELECT id, path, kind, engine, hash FROM assets WHERE path = ?`)
+      .get(path) as AssetRecord | undefined;
+  }
+
+  listAssets(): AssetRecord[] {
+    return this.db
+      .prepare(`SELECT id, path, kind, engine, hash FROM assets`)
+      .all() as AssetRecord[];
+  }
+
+  replaceAsset(
+    meta: { path: string; kind: string; engine: string; hash: string },
+    refs: AssetRefInsert[],
+  ): void {
+    const txn = this.db.transaction(() => {
+      const existing = this.getAssetByPath(meta.path);
+      if (existing) this.db.prepare(`DELETE FROM assets WHERE id = ?`).run(existing.id);
+      const assetId = this.db
+        .prepare(
+          `INSERT INTO assets (path, kind, engine, hash, indexed_at) VALUES (?,?,?,?,?) RETURNING id`,
+        )
+        .get(meta.path, meta.kind, meta.engine, meta.hash, Date.now()) as { id: number };
+      const insert = this.db.prepare(
+        `INSERT INTO asset_refs (asset_id, target_kind, target, detail) VALUES (?,?,?,?)`,
+      );
+      for (const r of refs) insert.run(assetId.id, r.targetKind, r.target, r.detail);
+    });
+    txn();
+  }
+
+  removeAsset(path: string): void {
+    this.db.prepare(`DELETE FROM assets WHERE path = ?`).run(path);
+  }
+
+  refsForAsset(assetId: number): AssetRefRow[] {
+    return this.db
+      .prepare(
+        `SELECT target_kind AS targetKind, target, detail FROM asset_refs WHERE asset_id = ? ORDER BY id`,
+      )
+      .all(assetId) as AssetRefRow[];
+  }
+
+  /** Assets holding a ref to any of the given targets (exact match). */
+  assetsReferencing(targets: string[]): Array<AssetRecord & AssetRefRow> {
+    if (targets.length === 0) return [];
+    const placeholders = targets.map(() => '?').join(',');
+    return this.db
+      .prepare(
+        `SELECT a.id, a.path, a.kind, a.engine, a.hash,
+                r.target_kind AS targetKind, r.target, r.detail
+         FROM asset_refs r JOIN assets a ON a.id = r.asset_id
+         WHERE r.target IN (${placeholders})
+         ORDER BY a.path, r.id`,
+      )
+      .all(...targets) as Array<AssetRecord & AssetRefRow>;
+  }
+
+  assetStats(): Array<{ engine: string; kind: string; n: number }> {
+    return this.db
+      .prepare(`SELECT engine, kind, COUNT(*) AS n FROM assets GROUP BY engine, kind ORDER BY engine, kind`)
+      .all() as Array<{ engine: string; kind: string; n: number }>;
+  }
+
+  /** Unity: guid declared by `<path>.meta`. */
+  guidForPath(path: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT r.target FROM asset_refs r JOIN assets a ON a.id = r.asset_id
+         WHERE a.path = ? AND r.target_kind = 'guid_of'`,
+      )
+      .get(`${path}.meta`) as { target: string } | undefined;
+    return row?.target ?? null;
+  }
+
+  /** Unity: file a guid points at (via its .meta). */
+  pathForGuid(guid: string): string | null {
+    const row = this.db
+      .prepare(`SELECT detail FROM asset_refs WHERE target_kind = 'guid_of' AND target = ?`)
+      .get(guid) as { detail: string | null } | undefined;
+    return row?.detail ?? null;
+  }
+
+  /** Symbols whose declaration header contains a marker (attributes, annotations). */
+  symbolsWithSignatureLike(needle: string, lang: LanguageId | undefined, limit: number): SymbolRow[] {
+    const langFilter = lang ? `AND f.lang = ?` : '';
+    const params: unknown[] = [`%${escapeLike(needle)}%`];
+    if (lang) params.push(lang);
+    params.push(limit);
+    const rows = this.db
+      .prepare(
+        `${SYMBOL_SELECT} WHERE s.signature LIKE ? ESCAPE '\\' ${langFilter}
+         ORDER BY f.path, s.start_line LIMIT ?`,
+      )
+      .all(...params) as unknown as SymbolRow[];
+    return normalize(rows);
+  }
 }
 
 export interface ImportRow {
@@ -759,6 +860,26 @@ export interface DependencyRow {
   specifier: string;
   startLine: number;
   resolvedPath: string | null;
+}
+
+export interface AssetRecord {
+  id: number;
+  path: string;
+  kind: string;
+  engine: string;
+  hash: string;
+}
+
+export interface AssetRefInsert {
+  targetKind: string;
+  target: string;
+  detail: string | null;
+}
+
+export interface AssetRefRow {
+  targetKind: string;
+  target: string;
+  detail: string | null;
 }
 
 function normalize(rows: SymbolRow[]): SymbolRow[] {

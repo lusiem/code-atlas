@@ -1,0 +1,10 @@
+config_version=5
+
+[application]
+
+config/name="Sample"
+run/main_scene="res://level.tscn"
+
+[autoload]
+
+GameState="*res://autoload/game_state.gd"

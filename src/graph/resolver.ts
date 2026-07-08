@@ -104,6 +104,17 @@ const UBIQUITOUS_NAMES: Partial<Record<LanguageId, ReadonlySet<string>>> = {
     'Task', 'String', 'StringBuilder', 'Console', 'Convert', 'Math', 'Array', 'Exception',
     'Stream', 'Object', 'Type', 'Action', 'Func', 'Tuple', 'Nullable',
   ]),
+  gdscript: new Set([
+    // annotations captured as identifiers + GDScript/Node builtins
+    'export', 'export_range', 'export_enum', 'export_flags', 'export_group', 'export_category',
+    'onready', 'tool', 'icon', 'rpc', 'warning_ignore',
+    'preload', 'load', 'print', 'push_error', 'push_warning', 'assert', 'str', 'int', 'float',
+    'range', 'len', 'abs', 'min', 'max', 'clamp', 'lerp', 'randf', 'randi',
+    'emit', 'connect', 'disconnect', 'is_connected', 'emit_signal', 'call_deferred', 'bind',
+    'new', 'free', 'queue_free', 'duplicate', 'instantiate',
+    'get_node', 'has_node', 'get_parent', 'get_tree', 'get_children', 'add_child',
+    'remove_child', 'set_process', 'set_physics_process', 'play', 'stop',
+  ]),
 };
 
 function isUbiquitous(ws: WorkspaceIndex, fileId: number, name: string): boolean {
@@ -179,9 +190,16 @@ export async function resolveWorkspace(
   // 1. imports -> files (always global: a new file can satisfy anyone's import)
   const importRows = store.listImportRows();
   const goModule = readGoModule(rootDir);
+  // Godot res:// paths are relative to their project.godot dir — a workspace
+  // can hold many projects (monorepos of samples/games). Longest root first.
+  const godotRoots = store
+    .listAssets()
+    .filter((a) => a.kind === 'project')
+    .map((a) => a.path.replace(/\/?project\.godot$/, ''))
+    .sort((a, b) => b.length - a.length);
   const resolutions: Array<{ id: number; fileId: number | null }> = [];
   for (const imp of importRows) {
-    const target = resolveImport(imp, pathToFileId, goModule);
+    const target = resolveImport(imp, pathToFileId, goModule, godotRoots);
     // a changed import target invalidates that file's occurrence resolutions
     if (scope && target !== imp.resolvedFileId) scope.add(imp.fileId);
     resolutions.push({ id: imp.id, fileId: target });
@@ -421,8 +439,9 @@ function resolveImport(
   imp: ImportRow,
   pathToFileId: Map<string, number>,
   goModule: string | null,
+  godotRoots: string[],
 ): number | null {
-  const path = resolveImportPath(imp, pathToFileId, goModule);
+  const path = resolveImportPath(imp, pathToFileId, goModule, godotRoots);
   return path === null ? null : (pathToFileId.get(path) ?? null);
 }
 
@@ -430,6 +449,7 @@ function resolveImportPath(
   imp: ImportRow,
   pathToFileId: Map<string, number>,
   goModule: string | null,
+  godotRoots: string[],
 ): string | null {
   const has = (p: string): boolean => pathToFileId.has(p);
   const dir = parentDir(imp.path);
@@ -559,6 +579,30 @@ function resolveImportPath(
 
     case 'c_sharp':
       return null; // namespaces do not map to files
+
+    case 'gdscript': {
+      // res:// is relative to the importing file's Godot project root — the
+      // nearest ancestor holding project.godot — falling back to the
+      // workspace root. Scene specifiers map to their sibling script.
+      const spec = imp.specifier;
+      if (spec.startsWith('res://')) {
+        const stem = spec.slice('res://'.length);
+        const owningRoot = godotRoots.find((r) => r === '' || imp.path.startsWith(`${r}/`));
+        for (const base of owningRoot !== undefined ? [owningRoot, ''] : ['']) {
+          const n = normalize(base === '' ? stem : `${base}/${stem}`);
+          if (has(n)) return n;
+          // scenes/resources aren't in files; map foo.tscn -> sibling foo.gd
+          const gd = n.replace(/\.(tscn|tres|scn|res)$/, '.gd');
+          if (gd !== n && has(gd)) return gd;
+        }
+        return null;
+      }
+      if (spec.startsWith('.')) {
+        const n = normalize(joinPosix(dir, spec));
+        if (has(n)) return n;
+      }
+      return null;
+    }
 
     default:
       return null;

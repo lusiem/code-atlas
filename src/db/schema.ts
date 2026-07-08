@@ -6,7 +6,7 @@ import { PACKAGE_VERSION } from '../version.js';
  * stepwise MIGRATIONS below and falls back to a drop-and-rebuild (the index
  * is a cache — a rebuild only costs one full sweep).
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** DDL for the embedding chunk tables (v3), shared by createAll and MIGRATIONS[2]. */
 const CHUNKS_DDL = `
@@ -27,14 +27,40 @@ const CHUNKS_DDL = `
     );
 `;
 
+/** DDL for the game-engine asset tables (v4), shared by createAll and MIGRATIONS[3]. */
+const ASSETS_DDL = `
+    CREATE TABLE assets (
+      id         INTEGER PRIMARY KEY,
+      path       TEXT NOT NULL UNIQUE,    -- relative to root, forward slashes
+      kind       TEXT NOT NULL,           -- scene|resource|project|prefab|unity_scene|unity_asset|meta|uproject|uplugin|buildcs
+      engine     TEXT NOT NULL,           -- godot|unity|unreal
+      hash       TEXT NOT NULL,
+      indexed_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE asset_refs (
+      id          INTEGER PRIMARY KEY,
+      asset_id    INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+      target_kind TEXT NOT NULL,          -- script|scene|resource|guid|class|signal_handler|autoload|module
+      target      TEXT NOT NULL,          -- res:// path, guid, class/method name
+      detail      TEXT                    -- node path, signal name, slot — adapter-specific
+    );
+    CREATE INDEX idx_asset_refs_asset ON asset_refs(asset_id);
+    CREATE INDEX idx_asset_refs_target ON asset_refs(target);
+`;
+
 /**
  * In-place migration from version N to N+1, run inside a transaction.
  * Leave a version out to force drop-and-rebuild for upgrades crossing it.
  * (2->3 is deliberately absent: creating the chunk tables in place would
  * leave them empty forever — chunks only fill when a file reindexes, and
- * unchanged hashes never do. A rebuild reindexes everything once.)
+ * unchanged hashes never do. A rebuild reindexes everything once.
+ * 3->4 is safe in place: assets were never indexed before, so the next
+ * sweep discovers every asset file as new and fills the tables.)
  */
-const MIGRATIONS: Record<number, (db: Database) => void> = {};
+const MIGRATIONS: Record<number, (db: Database) => void> = {
+  3: (db) => db.exec(ASSETS_DDL),
+};
 
 /**
  * Identity of the code that produced the index rows. Extractor and resolver
@@ -101,6 +127,8 @@ function generationMatches(db: Database): boolean {
 
 function dropAll(db: Database): void {
   db.exec(`
+    DROP TABLE IF EXISTS asset_refs;
+    DROP TABLE IF EXISTS assets;
     DROP TABLE IF EXISTS chunk_vectors;
     DROP TABLE IF EXISTS chunks;
     DROP TABLE IF EXISTS symbols_fts;
@@ -202,6 +230,7 @@ function createAll(db: Database): void {
       VALUES ('delete', old.id, old.name, old.qualified_name, old.doc_comment);
     END;
     ${CHUNKS_DDL}
+    ${ASSETS_DDL}
   `);
   db.prepare(`INSERT INTO meta (key, value) VALUES ('schema_version', ?)`).run(
     String(SCHEMA_VERSION),

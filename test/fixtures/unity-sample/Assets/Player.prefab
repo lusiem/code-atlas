@@ -1,0 +1,16 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &1000000
+GameObject:
+  m_ObjectHideFlags: 0
+  m_Name: Player
+  m_Component:
+  - component: {fileID: 11400000}
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1000000}
+  m_Script: {fileID: 11500000, guid: aaaa1111bbbb2222cccc3333dddd4444, type: 3}
+  m_Name:
+  maxHealth: 100
+  weaponMaterial: {fileID: 2100000, guid: eeee5555ffff6666aaaa7777bbbb8888, type: 2}

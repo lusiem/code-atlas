@@ -8,6 +8,8 @@ import { extractorFor } from '../parsing/registry.js';
 import { extractFile } from '../parsing/extractor.js';
 import { languageForPath } from '../languages.js';
 import { buildChunks } from '../embeddings/chunker.js';
+import { assetForPath, type AssetInfo } from '../engines/detect.js';
+import { extractAssetRefs } from '../engines/registry.js';
 import { affectedFilesFor, resolveWorkspace, type ResolveStats } from '../graph/resolver.js';
 import { scanWorkspace } from './scanner.js';
 
@@ -111,7 +113,7 @@ export class Indexer {
     p.errors = [];
 
     try {
-      const scanned = scanWorkspace(this.config);
+      const { files: scanned, assets } = scanWorkspace(this.config);
       p.totalFiles = scanned.length;
       const batch = this.newBatch();
 
@@ -132,6 +134,21 @@ export class Indexer {
 
       for (const known of this.store.listFiles()) {
         if (!seen.has(known.path)) this.removeOne(known.path, known.id, batch);
+      }
+
+      const seenAssets = new Set<string>();
+      for (const asset of assets) {
+        seenAssets.add(asset.relPath);
+        try {
+          this.indexAsset(asset.relPath, asset.absPath, asset.info);
+        } catch (err) {
+          if (p.errors.length < 50) {
+            p.errors.push({ path: asset.relPath, message: err instanceof Error ? err.message : String(err) });
+          }
+        }
+      }
+      for (const known of this.store.listAssets()) {
+        if (!seenAssets.has(known.path)) this.store.removeAsset(known.path);
       }
 
       await this.resolveBatch(batch);
@@ -159,10 +176,21 @@ export class Indexer {
         } catch {
           stat = null;
         }
+        const assetInfo = assetForPath(rel);
         if (!stat?.isFile()) {
           const existing = this.store.getFileByPath(rel);
           if (existing) this.removeOne(rel, existing.id, batch);
+          if (assetInfo) this.store.removeAsset(rel);
           continue;
+        }
+        if (assetInfo && stat.size <= this.config.maxFileBytes) {
+          try {
+            this.indexAsset(rel, abs, assetInfo);
+          } catch (err) {
+            if (p.errors.length < 50) {
+              p.errors.push({ path: rel, message: err instanceof Error ? err.message : String(err) });
+            }
+          }
         }
         const lang = languageForPath(rel);
         if (!lang?.grammarAvailable || stat.size > this.config.maxFileBytes) continue;
@@ -201,6 +229,15 @@ export class Indexer {
         }) ?? undefined;
     }
     this.progress.resolve = await resolveWorkspace(this.store, this.config.root, scope);
+  }
+
+  /** Hash-checked (re)index of one engine asset file. */
+  private indexAsset(relPath: string, absPath: string, info: AssetInfo): void {
+    const source = readFileSync(absPath, 'utf8');
+    const hash = createHash('sha1').update(source).digest('hex');
+    if (this.store.getAssetByPath(relPath)?.hash === hash) return;
+    const refs = extractAssetRefs(info, relPath, source);
+    this.store.replaceAsset({ path: relPath, kind: info.kind, engine: info.engine, hash }, refs);
   }
 
   private removeOne(relPath: string, fileId: number, batch: Batch): void {
