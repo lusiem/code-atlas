@@ -29,3 +29,34 @@ jobs:
       # real-world smoke: index this repo and talk to the server over stdio
       - run: node dist/index.js index --root .
       - run: node scripts/smoke-stdio.mjs
+
+  # the published tarball must be self-contained (grammars ship inside)
+  pack:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/smoke-pack.mjs
+
+  # regression bounds are loose (shared runners); numbers land in the job log
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: git clone --depth 1 --branch v3.5.13 https://github.com/vuejs/core /tmp/vue-core
+      - run: node scripts/bench.mjs /tmp/vue-core --assert

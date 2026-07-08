@@ -23,13 +23,16 @@ Claude Code ◄──────────── MCP tools over stdio ──�
 ## Install & use with Claude Code
 
 ```sh
-git clone <this repo> && cd code-atlas
-npm install && npm run build
-
-claude mcp add code-atlas -- node /path/to/code-atlas/dist/index.js serve
+claude mcp add code-atlas -- npx -y code-atlas serve
 ```
 
-(Once published: `claude mcp add code-atlas -- npx -y code-atlas-mcp serve`.)
+Or from a clone:
+
+```sh
+git clone https://github.com/lusiem/code-atlas && cd code-atlas
+npm install && npm run build
+claude mcp add code-atlas -- node /path/to/code-atlas/dist/index.js serve
+```
 
 The server indexes the current working directory; pass `--root <path>` to override.
 
@@ -42,6 +45,8 @@ node dist/index.js serve [--root <path>] [--no-watch] [--no-lsp] [--no-embedding
 ```
 
 ## Tools
+
+Full reference with example outputs: [docs/tools.md](docs/tools.md).
 
 | Tool | What it answers |
 |---|---|
@@ -102,7 +107,10 @@ of scope by design.
 4. ~~LSP layer (auto-acquired ts-ls/pyright/gopls; checksum-pinned rust-analyzer/clangd binaries; JDT LS/kotlin-language-server/csharp-ls with JRE/.NET detection; precise references/definitions/hover/call hierarchy with graceful fallback)~~ ✅
 5. ~~Local-embedding semantic search (`semantic_search`, hybrid BM25+vector reciprocal-rank fusion, lazy model download, incremental re-embedding)~~ ✅
 6. ~~Game-engine adapters: GDScript grammar (vendored wasm build), Godot scenes/autoloads, Unity prefabs/GUIDs, Unreal module graph + reflection search~~ ✅ — Godot editor LSP (TCP 6005) still to come
-7. npm publish, docs, benchmarks
+7. ~~Docs, benchmarks in CI (cold index 157k LOC ≈ 5 s, warm queries p95 < 10 ms), cross-platform CI, npm pack smoke~~ ✅ — npm publish + MCP registry submission pending
+
+Performance (vuejs/core, 157k LOC, 525 files): cold index **4.7 s**, warm tool calls
+**p95 ≤ 6 ms** through a full MCP round-trip. `scripts/bench.mjs` runs in CI.
 
 ## Development
 
@@ -114,6 +122,7 @@ npm run dev serve  # run from source via tsx
 ```
 
 Position convention: lines are 1-based, columns 0-based, paths root-relative with forward slashes.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add languages, servers, and grammars.
 
 ## License
 

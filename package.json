@@ -1,9 +1,17 @@
 {
-  "name": "code-atlas-mcp",
-  "version": "0.1.0",
-  "description": "Multi-language code intelligence MCP server: symbols, ASTs, call graphs, references, and semantic search for Claude Code and other MCP clients.",
+  "name": "code-atlas",
+  "version": "0.2.0",
+  "description": "Multi-language code intelligence MCP server: symbols, ASTs, call graphs, references, semantic search, and game-engine assets for Claude Code and other MCP clients.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lusiem/code-atlas.git"
+  },
+  "homepage": "https://github.com/lusiem/code-atlas#readme",
+  "bugs": {
+    "url": "https://github.com/lusiem/code-atlas/issues"
+  },
   "bin": {
     "code-atlas": "./dist/index.js"
   },
