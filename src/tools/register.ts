@@ -272,9 +272,7 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
         const row = store.symbolAt(file.id, args.line, Number.MAX_SAFE_INTEGER);
         if (row) targets = [row];
       } else if (args.name) {
-        targets = store
-          .searchSymbols(args.name, { limit: 10, offset: 0 })
-          .filter((r) => r.name === args.name || r.qualifiedName === args.name);
+        targets = store.symbolsByExactName(args.name);
       } else {
         return text('provide symbol_id, path+line, or name');
       }

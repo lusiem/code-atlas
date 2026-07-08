@@ -17,7 +17,9 @@ const col = source[lineIdx].indexOf(needle);
 
 const transport = new StdioClientTransport({
   command: process.execPath,
-  args: [serverEntry, 'serve', '--root', root],
+  // embeddings are irrelevant to LSP checks and would re-embed the whole
+  // repo in-process (all cores) whenever the model is already cached
+  args: [serverEntry, 'serve', '--root', root, '--no-embeddings'],
 });
 const client = new Client({ name: 'lsp-check', version: '0.0.0' });
 await client.connect(transport);
@@ -32,10 +34,28 @@ try {
     await new Promise((r) => setTimeout(r, 500));
   }
 
-  console.log(`=== find_references: ${symbolName} ===`);
+  console.log(`=== find_references: ${symbolName} (first call — may only kick the server) ===`);
   const t0 = Date.now();
   console.log(await call('find_references', { name: symbolName, limit: 15 }));
   console.log(`(took ${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+
+  // cold acquisition continues in the background; wait for running/failed
+  let lspLine = '';
+  for (let i = 0; i < 360; i++) {
+    const status = await call('index_status');
+    lspLine = status.split('\n').find((l) => /running|failed|not found/.test(l)) ?? '';
+    if (lspLine) break;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  console.log(`\nserver: ${lspLine.trim()}`);
+  if (lspLine.includes('running')) {
+    // give a cold server a beat to import the project, then ask again
+    await new Promise((r) => setTimeout(r, 10000));
+    console.log(`\n=== find_references: ${symbolName} (server running) ===`);
+    const t1 = Date.now();
+    console.log(await call('find_references', { name: symbolName, limit: 15 }));
+    console.log(`(took ${((Date.now() - t1) / 1000).toFixed(1)}s)`);
+  }
 
   console.log(`\n=== go_to_definition: ${relFile}:${lineIdx + 1}:${col} (${needle}) ===`);
   console.log(await call('go_to_definition', { path: relFile, line: lineIdx + 1, col }));

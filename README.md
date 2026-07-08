@@ -65,9 +65,14 @@ node dist/index.js serve [--root <path>] [--no-watch] [--no-lsp] [--no-embedding
 Cross-file answers are **LSP-first with a structural floor**: when a language server is available
 (found on PATH or auto-acquired into a per-user cache), references/definitions/hover/call
 hierarchies are exact and tagged `lsp`; everywhere else, heuristic import/name resolution answers
-with a confidence score per edge. Wave-1 servers: typescript-language-server, pyright, gopls,
-rust-analyzer, clangd (Java/Kotlin/C# are structural-only for now). Disable with `--no-lsp`;
-disable auto-download with `--no-download`.
+with a confidence score per edge. Servers: typescript-language-server + pyright (npm), gopls
+(go install), rust-analyzer + clangd (pinned, SHA-256-verified release binaries), Eclipse JDT LS
+for Java (needs a Java 21+ runtime — detected via PATH/JAVA_HOME), kotlin-language-server (needs
+any JRE), and csharp-ls for C# (needs the .NET SDK; installed as a dotnet tool — deliberately not
+Microsoft's Roslyn LSP, whose license is VS-only). Missing runtimes degrade that language to
+structural, reported honestly in `index_status`. A first-time acquisition (download + boot) never
+blocks a query: tools wait up to 8 s, then answer structurally while the server finishes starting.
+Disable with `--no-lsp`; disable auto-download with `--no-download`.
 
 **Semantic search** embeds every function/class (signature + doc + body) with a code-tuned local
 model — `jinaai/jina-embeddings-v2-base-code`, quantized ONNX — and fuses cosine similarity with
@@ -94,7 +99,7 @@ of scope by design.
 1. ~~Structural core: scanner, SQLite+FTS5 index, TS/JS/Python extractors, first 6 tools~~ ✅
 2. ~~All 11 language extractors, cross-file import resolution, call graph (`find_references`, `call_hierarchy`, `trace_path`)~~ ✅
 3. ~~File watcher + incremental reindexing (scoped re-resolution, schema migrations)~~ ✅
-4. ~~LSP layer wave 1 (auto-acquired ts-ls/pyright/gopls; PATH-detected rust-analyzer/clangd; precise references/definitions/hover/call hierarchy with graceful fallback)~~ ✅ — Java/Kotlin/C# servers and pinned binary downloads still to come
+4. ~~LSP layer (auto-acquired ts-ls/pyright/gopls; checksum-pinned rust-analyzer/clangd binaries; JDT LS/kotlin-language-server/csharp-ls with JRE/.NET detection; precise references/definitions/hover/call hierarchy with graceful fallback)~~ ✅
 5. ~~Local-embedding semantic search (`semantic_search`, hybrid BM25+vector reciprocal-rank fusion, lazy model download, incremental re-embedding)~~ ✅
 6. ~~Game-engine adapters: GDScript grammar (vendored wasm build), Godot scenes/autoloads, Unity prefabs/GUIDs, Unreal module graph + reflection search~~ ✅ — Godot editor LSP (TCP 6005) still to come
 7. npm publish, docs, benchmarks

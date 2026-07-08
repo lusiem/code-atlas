@@ -23,6 +23,8 @@ interface Entry {
 
 const IDLE_SHUTDOWN_MS = 10 * 60 * 1000;
 const MAX_CRASHES = 3;
+/** How long a tool call waits for a server start before answering structurally. */
+const START_BUDGET_MS = 8000;
 
 /**
  * Lazily spawns one language server per registry entry per workspace and
@@ -62,7 +64,15 @@ export class LspManager {
     entry.startPromise ??= this.startEntry(entry).finally(() => {
       entry.startPromise = null;
     });
-    return entry.startPromise;
+    // Wait briefly so a warm server still answers the first query — but a
+    // cold acquisition (50 MB download, JVM boot) keeps going in the
+    // background while this query falls back to the structural index.
+    // MCP clients time tool calls out at 60 s; never ride close to that.
+    const budget = new Promise<'timeout'>((resolve) => {
+      setTimeout(() => resolve('timeout'), START_BUDGET_MS).unref();
+    });
+    const winner = await Promise.race([entry.startPromise, budget]);
+    return winner === 'timeout' ? null : winner;
   }
 
   private async startEntry(entry: Entry): Promise<LspClient | null> {
@@ -73,6 +83,7 @@ export class LspManager {
         (await ensureServer(entry.spec, {
           download: this.opts.download,
           cacheDir: this.opts.cacheDir ?? defaultCacheDir(),
+          rootDir: this.rootDir,
         }));
       if (!entry.launch) {
         entry.state = 'unavailable';

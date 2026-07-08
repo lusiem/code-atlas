@@ -54,9 +54,9 @@ function findSymbol(ctx: AppContext, args: SymbolArgIn, prefix = ''): Found {
       : { ok: false, message: `no symbol at ${rel}:${args.line}` };
   }
   if (args.name) {
-    const matches = store
-      .searchSymbols(args.name, { limit: 10, offset: 0 })
-      .filter((r) => r.name === args.name || r.qualifiedName === args.name);
+    // exact index lookup — FTS ranking can push the exact match out of the
+    // window on doc-heavy repos (okhttp: docs mention OkHttpClient everywhere)
+    const matches = store.symbolsByExactName(args.name);
     if (matches.length === 1) return { ok: true, sym: matches[0]! };
     if (matches.length === 0) return { ok: false, message: `no symbol named "${args.name}"` };
     return {

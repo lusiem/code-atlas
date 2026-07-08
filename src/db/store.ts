@@ -287,6 +287,36 @@ export class Store {
     return normalize(rows);
   }
 
+  /** Exact name or qualified-name matches — index lookup, no FTS ranking. */
+  symbolsByExactName(name: string, limit = 10): SymbolRow[] {
+    const rows = this.db
+      .prepare(
+        `${SYMBOL_SELECT} WHERE s.name = ? OR s.qualified_name = ?
+         ORDER BY s.is_exported DESC, f.path, s.start_line LIMIT ?`,
+      )
+      .all(name, name, limit) as unknown as SymbolRow[];
+    const matches = normalize(rows);
+    // Constructors (Java/C#) and impl blocks (Rust) share their type's name;
+    // when everything else is one of those, the type is the unambiguous answer.
+    const types = matches.filter((m) =>
+      ['class', 'interface', 'struct', 'enum', 'trait'].includes(m.kind),
+    );
+    if (types.length === 1) {
+      const type = types[0]!;
+      const rest = matches.filter((m) => m !== type);
+      if (
+        rest.every(
+          (m) =>
+            (m.kind === 'constructor' && m.parentSymbolId === type.id) ||
+            (m.kind === 'impl' && m.path === type.path),
+        )
+      ) {
+        return [type];
+      }
+    }
+    return matches;
+  }
+
   symbolsForFile(fileId: number): SymbolRow[] {
     const rows = this.db
       .prepare(`${SYMBOL_SELECT} WHERE s.file_id = ? ORDER BY s.start_line, s.start_col`)
