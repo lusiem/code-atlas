@@ -7,6 +7,7 @@ import type { Store } from '../db/store.js';
 import { extractorFor } from '../parsing/registry.js';
 import { extractFile } from '../parsing/extractor.js';
 import { languageForPath } from '../languages.js';
+import { buildChunks } from '../embeddings/chunker.js';
 import { affectedFilesFor, resolveWorkspace, type ResolveStats } from '../graph/resolver.js';
 import { scanWorkspace } from './scanner.js';
 
@@ -232,7 +233,12 @@ export class Indexer {
       for (const n of this.store.symbolNamesInFiles([existing.id])) batch.oldSymbolNames.add(n);
     }
     const extraction = await extractFile(extractor, source);
-    const fileId = this.store.replaceFile({ path: relPath, lang, hash, size, mtimeMs }, extraction);
+    const chunks = this.config.embeddings.enabled ? buildChunks(extraction, source, relPath) : [];
+    const fileId = this.store.replaceFile(
+      { path: relPath, lang, hash, size, mtimeMs },
+      extraction,
+      chunks,
+    );
     batch.changedFileIds.push(fileId);
     this.progress.changedFiles++;
   }

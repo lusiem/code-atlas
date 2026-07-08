@@ -42,6 +42,7 @@
     "better-sqlite3": "^12.11.1",
     "chokidar": "^5.0.0",
     "ignore": "^7.0.5",
+    "sqlite-vec": "^0.1.9",
     "vscode-jsonrpc": "^9.0.1",
     "web-tree-sitter": "^0.26.10",
     "zod": "^4.4.3"

@@ -5,6 +5,7 @@ import type { AppContext } from '../context.js';
 import { LANGUAGES } from '../languages.js';
 import { supportedLanguages } from '../parsing/registry.js';
 import { compileQuery, parse } from '../parsing/loader.js';
+import { semanticSearch } from '../embeddings/search.js';
 import { lspHoverFor } from '../lsp/overlay.js';
 import { formatSymbolLine, kindPrefix, paginationFooter, readSnippet } from './format.js';
 import { registerGraphTools } from './graph.js';
@@ -103,6 +104,7 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
           : 'watcher: off (refresh via reindex or restart)',
       );
       if (ctx.lsp) lines.push(...ctx.lsp.statusLines());
+      if (ctx.embedder) lines.push(...ctx.embedder.statusLines());
       if (p.errors.length > 0) {
         lines.push('', `errors (${p.errors.length}):`);
         for (const e of p.errors.slice(0, 10)) lines.push(`  ${e.path}: ${e.message}`);
@@ -154,6 +156,35 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
       if (rows.length === 0) return text(`no symbols matching "${args.query}"`);
       const body = rows.map((r) => formatSymbolLine(r)).join('\n');
       return text(body + paginationFooter(rows.length, args.limit, args.offset));
+    },
+  );
+
+  server.registerTool(
+    'semantic_search',
+    {
+      title: 'Semantic code search',
+      description:
+        'Natural-language search over the code: describe behavior ("where is retry backoff implemented", ' +
+        '"function that validates auth tokens") rather than symbol names. Hybrid keyword+embedding ranking, ' +
+        'fully local. First-ever call downloads the embedding model (~150 MB one-time); until embedding ' +
+        'coverage completes, results are keyword-weighted and say so.',
+      inputSchema: {
+        query: z.string().min(1).describe('what the code does, in plain language'),
+        k: z.number().int().min(1).max(50).default(10),
+        lang: z.enum(LANG_VALUES).optional(),
+      },
+    },
+    async (args) => {
+      const result = await semanticSearch(ctx, args.query, args.k, args.lang as LanguageId | undefined);
+      if (result.hits.length === 0) {
+        return text(`no matches for "${args.query}"${result.note ? `\n(${result.note})` : ''}`);
+      }
+      const lines = result.hits.map((h) => {
+        const cos = h.cosine !== null ? ` cos=${h.cosine.toFixed(2)}` : '';
+        return `[${h.sources}${cos}] ${formatSymbolLine(h.symbol)}`;
+      });
+      if (result.note) lines.push(`(${result.note})`);
+      return text(lines.join('\n'));
     },
   );
 

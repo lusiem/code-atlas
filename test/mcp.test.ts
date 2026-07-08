@@ -53,6 +53,7 @@ describe('MCP server end-to-end', () => {
       'project_overview',
       'reindex',
       'search_symbols',
+      'semantic_search',
       'trace_path',
       'type_hierarchy',
     ]);
@@ -149,5 +150,12 @@ describe('MCP server end-to-end', () => {
   it('trace_path reports unreachable pairs honestly', async () => {
     const text = await callText('trace_path', { from_name: 'add', to_name: 'report' });
     expect(text).toContain('no call path');
+  });
+
+  it('semantic_search degrades to keyword-only without an embedder', async () => {
+    const text = await callText('semantic_search', { query: 'add' });
+    expect(text).toContain('[fts]');
+    expect(text).toContain('function add');
+    expect(text).toContain('keyword-only: embeddings disabled');
   });
 });

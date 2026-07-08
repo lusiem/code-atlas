@@ -15,6 +15,14 @@ const configFileSchema = z
       })
       .partial()
       .default({}),
+    embeddings: z
+      .object({
+        enabled: z.boolean().default(true),
+        download: z.boolean().default(true),
+        model: z.string().default('code'),
+      })
+      .partial()
+      .default({}),
   })
   .partial();
 
@@ -31,6 +39,8 @@ export interface AtlasConfig {
   watch: boolean;
   /** LSP layer: precise answers overlaid on the structural index. */
   lsp: { enabled: boolean; download: boolean };
+  /** Local embedding layer backing semantic_search. model: 'code' | 'fast' | HF id. */
+  embeddings: { enabled: boolean; download: boolean; model: string };
   /** Absolute path of the SQLite index. */
   dbPath: string;
   /** Directory holding the index and other per-project state. */
@@ -60,6 +70,11 @@ export function loadConfig(rootInput: string): AtlasConfig {
     lsp: {
       enabled: fileValues.lsp?.enabled ?? true,
       download: fileValues.lsp?.download ?? true,
+    },
+    embeddings: {
+      enabled: fileValues.embeddings?.enabled ?? true,
+      download: fileValues.embeddings?.download ?? true,
+      model: fileValues.embeddings?.model ?? 'code',
     },
     stateDir,
     dbPath: join(stateDir, 'index.db'),

@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig } from './config.js';
 import type { AppContext } from './context.js';
 import { Store } from './db/store.js';
+import { Embedder } from './embeddings/embedder.js';
 import { Indexer } from './indexer/indexer.js';
 import { Watcher } from './indexer/watcher.js';
 import { LspManager } from './lsp/manager.js';
@@ -14,12 +15,14 @@ function parseArgs(argv: string[]): {
   watch: boolean;
   lsp: boolean;
   download: boolean;
+  embeddings: boolean;
 } {
   let command = 'serve';
   let root = process.cwd();
   let watch = true;
   let lsp = true;
   let download = true;
+  let embeddings = true;
   const args = [...argv];
   if (args[0] && !args[0].startsWith('-')) command = args.shift()!;
   for (let i = 0; i < args.length; i++) {
@@ -27,16 +30,21 @@ function parseArgs(argv: string[]): {
     else if (args[i] === '--no-watch') watch = false;
     else if (args[i] === '--no-lsp') lsp = false;
     else if (args[i] === '--no-download') download = false;
+    else if (args[i] === '--no-embeddings') embeddings = false;
   }
-  return { command, root, watch, lsp, download };
+  return { command, root, watch, lsp, download, embeddings };
 }
 
 async function main(): Promise<void> {
-  const { command, root, watch, lsp, download } = parseArgs(process.argv.slice(2));
+  const { command, root, watch, lsp, download, embeddings } = parseArgs(process.argv.slice(2));
   const config = loadConfig(root);
   if (!watch) config.watch = false;
   if (!lsp) config.lsp.enabled = false;
-  if (!download) config.lsp.download = false;
+  if (!embeddings) config.embeddings.enabled = false;
+  if (!download) {
+    config.lsp.download = false;
+    config.embeddings.download = false;
+  }
   const store = new Store(config.dbPath);
   const indexer = new Indexer(config, store);
   const ctx: AppContext = { config, store, indexer };
@@ -60,6 +68,7 @@ async function main(): Promise<void> {
   }
 
   ctx.lsp = new LspManager(config.root, config.lsp);
+  ctx.embedder = new Embedder(store, config.embeddings);
 
   // stdout is the JSON-RPC channel — all logging goes to stderr
   const server = createServer(ctx);
@@ -71,6 +80,7 @@ async function main(): Promise<void> {
     void (async () => {
       await ctx.watcher?.stop();
       await ctx.lsp?.shutdown();
+      await ctx.embedder?.shutdown();
       store.close();
       process.exit(0);
     })();
@@ -80,9 +90,15 @@ async function main(): Promise<void> {
   void indexer.run().then(() => {
     const stats = store.stats();
     console.error(`[code-atlas] index ready: ${stats.files} files, ${stats.symbols} symbols`);
+    // resumes embedding only when the model is already cached locally;
+    // the first-ever download waits for an explicit semantic_search
+    ctx.embedder?.activate('startup');
     if (config.watch) {
       ctx.watcher = new Watcher(config, indexer, {
-        onBatch: (paths) => ctx.lsp?.filesChanged(paths),
+        onBatch: (paths) => {
+          ctx.lsp?.filesChanged(paths);
+          ctx.embedder?.nudge();
+        },
       });
       ctx.watcher.start();
       console.error('[code-atlas] watching for changes');

@@ -6,11 +6,33 @@ import { PACKAGE_VERSION } from '../version.js';
  * stepwise MIGRATIONS below and falls back to a drop-and-rebuild (the index
  * is a cache — a rebuild only costs one full sweep).
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
+
+/** DDL for the embedding chunk tables (v3), shared by createAll and MIGRATIONS[2]. */
+const CHUNKS_DDL = `
+    CREATE TABLE chunks (
+      id        INTEGER PRIMARY KEY,
+      file_id   INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+      symbol_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+      text_hash TEXT NOT NULL,             -- sha1 of content; reuse vectors across reindexes
+      content   TEXT NOT NULL,             -- what gets embedded (signature + doc + capped body)
+      embedded  INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX idx_chunks_file ON chunks(file_id);
+    CREATE INDEX idx_chunks_pending ON chunks(embedded) WHERE embedded = 0;
+
+    CREATE TABLE chunk_vectors (
+      chunk_id  INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+      embedding BLOB NOT NULL              -- float32[dims], dims in meta 'embedding_dims'
+    );
+`;
 
 /**
  * In-place migration from version N to N+1, run inside a transaction.
  * Leave a version out to force drop-and-rebuild for upgrades crossing it.
+ * (2->3 is deliberately absent: creating the chunk tables in place would
+ * leave them empty forever — chunks only fill when a file reindexes, and
+ * unchanged hashes never do. A rebuild reindexes everything once.)
  */
 const MIGRATIONS: Record<number, (db: Database) => void> = {};
 
@@ -79,6 +101,8 @@ function generationMatches(db: Database): boolean {
 
 function dropAll(db: Database): void {
   db.exec(`
+    DROP TABLE IF EXISTS chunk_vectors;
+    DROP TABLE IF EXISTS chunks;
     DROP TABLE IF EXISTS symbols_fts;
     DROP TABLE IF EXISTS occurrences;
     DROP TABLE IF EXISTS edges;
@@ -177,6 +201,7 @@ function createAll(db: Database): void {
       INSERT INTO symbols_fts(symbols_fts, rowid, name, qualified_name, doc_comment)
       VALUES ('delete', old.id, old.name, old.qualified_name, old.doc_comment);
     END;
+    ${CHUNKS_DDL}
   `);
   db.prepare(`INSERT INTO meta (key, value) VALUES ('schema_version', ?)`).run(
     String(SCHEMA_VERSION),

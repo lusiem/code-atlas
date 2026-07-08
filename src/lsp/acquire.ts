@@ -1,18 +1,13 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import { cacheRoot } from '../cache.js';
 import type { LaunchSpec } from './client.js';
 import type { ServerSpec } from './registry.js';
 
 /** Per-user cache for auto-acquired language servers. */
 export function defaultCacheDir(): string {
-  if (process.env.CODE_ATLAS_CACHE_DIR) return process.env.CODE_ATLAS_CACHE_DIR;
-  const base =
-    process.platform === 'win32'
-      ? (process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'))
-      : (process.env.XDG_CACHE_HOME ?? join(homedir(), '.cache'));
-  return join(base, 'code-atlas', 'servers');
+  return join(cacheRoot(), 'servers');
 }
 
 const WIN_EXTS = ['.exe', '.cmd', '.bat', ''];
@@ -32,7 +27,8 @@ export function findOnPath(names: string[]): string | null {
   return null;
 }
 
-function run(command: string, args: string[], env?: NodeJS.ProcessEnv): Promise<boolean> {
+/** Run a command to completion, false on spawn failure or nonzero exit. */
+export function runCommand(command: string, args: string[], env?: NodeJS.ProcessEnv): Promise<boolean> {
   return new Promise((resolve) => {
     const viaCmd = process.platform === 'win32' && !/\.exe$/i.test(command);
     const child = viaCmd
@@ -63,7 +59,7 @@ export async function ensureServer(
     if (!existsSync(entry)) {
       if (!opts.download) return null;
       mkdirSync(installDir, { recursive: true });
-      const ok = await run('npm', [
+      const ok = await runCommand('npm', [
         'install',
         '--prefix', installDir,
         '--no-audit', '--no-fund', '--loglevel=error',
@@ -84,7 +80,7 @@ export async function ensureServer(
   if (!existsSync(bin)) {
     if (!opts.download || !findOnPath(['go'])) return null;
     mkdirSync(binDir, { recursive: true });
-    const ok = await run('go', ['install', acquire.module], { ...process.env, GOBIN: binDir });
+    const ok = await runCommand('go', ['install', acquire.module], { ...process.env, GOBIN: binDir });
     if (!ok || !existsSync(bin)) return null;
   }
   return { command: bin, args: acquire.args };
