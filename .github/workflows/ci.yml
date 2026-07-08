@@ -11,7 +11,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        node: [20, 22, 24]
+        # Node 20 reached EOL 2026-04 and better-sqlite3 no longer ships
+        # win32 prebuilds for it (source build breaks against VS 2026)
+        node: [22, 24]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

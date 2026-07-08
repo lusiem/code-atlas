@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 
@@ -50,7 +50,14 @@ export interface AtlasConfig {
 export const CONFIG_FILE_NAME = 'code-atlas.json';
 
 export function loadConfig(rootInput: string): AtlasConfig {
-  const root = resolve(rootInput);
+  // canonicalize: Windows 8.3 short paths (RUNNER~1) trip a libuv assertion
+  // inside fs watching, and symlinked roots would double-report paths
+  let root = resolve(rootInput);
+  try {
+    root = realpathSync.native(root);
+  } catch {
+    // nonexistent root fails later with a clearer error
+  }
   let fileValues: z.infer<typeof configFileSchema> = {};
   const configPath = join(root, CONFIG_FILE_NAME);
   if (existsSync(configPath)) {
