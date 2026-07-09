@@ -193,7 +193,7 @@ export class Indexer {
           }
         }
         const lang = languageForPath(rel);
-        if (!lang?.grammarAvailable || stat.size > this.config.maxFileBytes) continue;
+        if (!lang || stat.size > this.config.maxFileBytes) continue;
         try {
           await this.indexOne(rel, abs, lang.id, stat.size, stat.mtimeMs, batch);
         } catch (err) {

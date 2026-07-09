@@ -101,7 +101,7 @@ export class Watcher {
       this.needsFullSweep = true;
       this.igCache.clear();
     } else {
-      if (!languageForPath(rel)?.grammarAvailable && !assetForPath(rel)) return;
+      if (!languageForPath(rel) && !assetForPath(rel)) return;
       if (this.isIgnoredRel(rel, false)) return;
       this.pending.add(rel);
     }

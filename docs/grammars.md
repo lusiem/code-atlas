@@ -1,7 +1,7 @@
 # Grammar acquisition
 
 Grammar `.wasm` files live in `grammars/` (gitignored; shipped in the npm tarball).
-`npm install` / `npm run grammars` assembles them from two sources
+`npm install` / `npm run grammars` assembles them from three sources
 (`scripts/copy-grammars.mjs`):
 
 1. **@vscode/tree-sitter-wasm** — typescript, tsx, javascript, python, cpp,
@@ -12,17 +12,16 @@ Grammar `.wasm` files live in `grammars/` (gitignored; shipped in the npm tarbal
    hard-coded in the script — c (official `tree-sitter/tree-sitter-c` release)
    and kotlin (`fwcd/tree-sitter-kotlin` release). Downloads are best-effort:
    if one fails, that language simply isn't indexed and the script says so.
+3. **`grammars-vendored/`** — wasm we build ourselves because upstream ships no
+   binary: gdscript (`PrestonKnopp/tree-sitter-gdscript`). Committed to the repo
+   with build provenance in `grammars-vendored/README.md`.
+
+Godot's `.tscn`/`.tres` scene formats are hand-parsed (`src/engines/godot.ts`) —
+no grammar needed.
 
 > **Do not** source grammars from the `tree-sitter-wasms` npm package: its binaries
 > are built against an old tree-sitter ABI and fail with a dylink metadata error
 > under web-tree-sitter ≥ 0.25.
-
-## Pending
-
-| Language | Plan |
-|---|---|
-| gdscript | `PrestonKnopp/tree-sitter-gdscript` — build wasm in CI with `tree-sitter build --wasm` (emscripten container) or vendor a checked build. Phase 6. |
-| godot_resource | `PrestonKnopp/tree-sitter-godot-resource` for `.tscn`/`.tres`. Phase 6 (may use a hand-rolled parser instead; the format is simple). |
 
 ## Version bumps
 

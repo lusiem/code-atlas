@@ -125,7 +125,7 @@ export function scanWorkspace(config: AtlasConfig): ScanResult {
       } else if (entry.isFile()) {
         const lang = languageForPath(entry.name);
         const asset = assetForPath(entry.name);
-        if ((!lang || !lang.grammarAvailable) && !asset) continue;
+        if (!lang && !asset) continue;
         if (isIgnored(localFrames, rel, false)) continue;
         const abs = join(absDir, entry.name);
         let stat;
@@ -135,7 +135,7 @@ export function scanWorkspace(config: AtlasConfig): ScanResult {
           continue;
         }
         if (stat.size > config.maxFileBytes) continue;
-        if (lang?.grammarAvailable) {
+        if (lang) {
           results.push({
             relPath: rel,
             absPath: abs,

@@ -3,23 +3,21 @@ import type { LanguageId } from './types.js';
 export interface LanguageInfo {
   id: LanguageId;
   extensions: string[];
-  /** Grammar wasm present in grammars/ today. */
-  grammarAvailable: boolean;
 }
 
 export const LANGUAGES: LanguageInfo[] = [
-  { id: 'typescript', extensions: ['.ts', '.mts', '.cts'], grammarAvailable: true },
-  { id: 'tsx', extensions: ['.tsx'], grammarAvailable: true },
-  { id: 'javascript', extensions: ['.js', '.mjs', '.cjs', '.jsx'], grammarAvailable: true },
-  { id: 'python', extensions: ['.py', '.pyi'], grammarAvailable: true },
-  { id: 'c', extensions: ['.c'], grammarAvailable: true },
-  { id: 'cpp', extensions: ['.cc', '.cpp', '.cxx', '.hpp', '.hh', '.hxx', '.h', '.inl'], grammarAvailable: true },
-  { id: 'rust', extensions: ['.rs'], grammarAvailable: true },
-  { id: 'go', extensions: ['.go'], grammarAvailable: true },
-  { id: 'java', extensions: ['.java'], grammarAvailable: true },
-  { id: 'kotlin', extensions: ['.kt', '.kts'], grammarAvailable: true },
-  { id: 'c_sharp', extensions: ['.cs'], grammarAvailable: true },
-  { id: 'gdscript', extensions: ['.gd'], grammarAvailable: true },
+  { id: 'typescript', extensions: ['.ts', '.mts', '.cts'] },
+  { id: 'tsx', extensions: ['.tsx'] },
+  { id: 'javascript', extensions: ['.js', '.mjs', '.cjs', '.jsx'] },
+  { id: 'python', extensions: ['.py', '.pyi'] },
+  { id: 'c', extensions: ['.c'] },
+  { id: 'cpp', extensions: ['.cc', '.cpp', '.cxx', '.hpp', '.hh', '.hxx', '.h', '.inl'] },
+  { id: 'rust', extensions: ['.rs'] },
+  { id: 'go', extensions: ['.go'] },
+  { id: 'java', extensions: ['.java'] },
+  { id: 'kotlin', extensions: ['.kt', '.kts'] },
+  { id: 'c_sharp', extensions: ['.cs'] },
+  { id: 'gdscript', extensions: ['.gd'] },
 ];
 
 const byExtension = new Map<string, LanguageInfo>();

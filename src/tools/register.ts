@@ -2,7 +2,6 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { relative, sep } from 'node:path';
 import type { AppContext } from '../context.js';
-import { LANGUAGES } from '../languages.js';
 import { supportedLanguages } from '../parsing/registry.js';
 import { compileQuery, parse } from '../parsing/loader.js';
 import { semanticSearch } from '../embeddings/search.js';
@@ -78,9 +77,7 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
         lines.push('', 'engine assets:');
         for (const [engine, parts] of byEngine) lines.push(`  ${engine}: ${parts.join(', ')}`);
       }
-      const unsupported = LANGUAGES.filter((l) => !l.grammarAvailable).map((l) => l.id);
       lines.push('', `extractors active: ${supportedLanguages().join(', ')}`);
-      if (unsupported.length > 0) lines.push(`not yet supported (planned): ${unsupported.join(', ')}`);
       return text(lines.join('\n'));
     },
   );
