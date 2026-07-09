@@ -42,10 +42,12 @@ try {
   // 3. install into a scratch project and run the installed bin
   run(npm, ['init', '-y'], { cwd: scratch, stdio: 'ignore' });
   run(npm, ['install', tarball, '--no-audit', '--no-fund', '--loglevel=error'], { cwd: scratch });
-  const installedEntry = join(scratch, 'node_modules', 'code-atlas', 'dist', 'index.js');
+  const pkgName = packJson[0].name; // scoped names install under node_modules/@scope/name
+  const installedRoot = join(scratch, 'node_modules', ...pkgName.split('/'));
+  const installedEntry = join(installedRoot, 'dist', 'index.js');
   check(existsSync(installedEntry), 'installed entry exists');
   check(
-    existsSync(join(scratch, 'node_modules', 'code-atlas', 'grammars', 'tree-sitter-gdscript.wasm')),
+    existsSync(join(installedRoot, 'grammars', 'tree-sitter-gdscript.wasm')),
     'vendored grammar installed',
   );
 
