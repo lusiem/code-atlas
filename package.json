@@ -1,6 +1,7 @@
 {
   "name": "code-atlas",
   "version": "0.2.0",
+  "mcpName": "io.github.lusiem/code-atlas",
   "description": "Multi-language code intelligence MCP server: symbols, ASTs, call graphs, references, semantic search, and game-engine assets for Claude Code and other MCP clients.",
   "type": "module",
   "license": "MIT",
@@ -29,6 +30,7 @@
     "grammars": "node scripts/copy-grammars.mjs",
     "prepare": "node scripts/copy-grammars.mjs",
     "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build && npm test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
