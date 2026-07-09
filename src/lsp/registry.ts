@@ -80,6 +80,12 @@ export interface ServerSpec {
   installHint: string;
   /** Test hook: launch this command directly, skipping detection/acquisition. */
   launch?: { command: string; args: string[]; initializationOptions?: unknown };
+  /**
+   * Attach to an externally-managed server over TCP instead of spawning one
+   * (Godot editor). Connect failures are normal (editor not open) — retried
+   * on demand, never escalated to `failed`.
+   */
+  attach?: { host: string; port: number };
 }
 
 export const REGISTRY: ServerSpec[] = [
@@ -258,6 +264,20 @@ export const REGISTRY: ServerSpec[] = [
       args: [],
     },
     installHint: 'requires the .NET SDK; csharp-ls is then installed as a dotnet tool',
+  },
+  {
+    id: 'godot-editor-lsp',
+    languages: ['gdscript'],
+    detectNames: [],
+    pathArgs: [],
+    languageIds: { gdscript: 'gdscript' },
+    // the Godot editor serves LSP whenever a project is open; default port
+    // 6005 (Editor Settings > Network > Language Server)
+    attach: {
+      host: '127.0.0.1',
+      port: Number(process.env['CODE_ATLAS_GODOT_LSP_PORT'] ?? 6005),
+    },
+    installHint: 'open the project in the Godot editor (LSP on 127.0.0.1:6005)',
   },
 ];
 

@@ -75,7 +75,10 @@ with a confidence score per edge. Servers: typescript-language-server + pyright 
 (go install), rust-analyzer + clangd (pinned, SHA-256-verified release binaries), Eclipse JDT LS
 for Java (needs a Java 21+ runtime — detected via PATH/JAVA_HOME), kotlin-language-server (needs
 any JRE), and csharp-ls for C# (needs the .NET SDK; installed as a dotnet tool — deliberately not
-Microsoft's Roslyn LSP, whose license is VS-only). Missing runtimes degrade that language to
+Microsoft's Roslyn LSP, whose license is VS-only). GDScript attaches to the Godot editor's
+built-in language server (TCP 127.0.0.1:6005, override with `CODE_ATLAS_GODOT_LSP_PORT`)
+whenever the editor has the project open — close the editor and answers fall back to structural,
+reopen it and the next query reattaches. Missing runtimes degrade that language to
 structural, reported honestly in `index_status`. A first-time acquisition (download + boot) never
 blocks a query: tools wait up to 8 s, then answer structurally while the server finishes starting.
 Disable with `--no-lsp`; disable auto-download with `--no-download`.
@@ -107,7 +110,7 @@ of scope by design.
 3. ~~File watcher + incremental reindexing (scoped re-resolution, schema migrations)~~ ✅
 4. ~~LSP layer (auto-acquired ts-ls/pyright/gopls; checksum-pinned rust-analyzer/clangd binaries; JDT LS/kotlin-language-server/csharp-ls with JRE/.NET detection; precise references/definitions/hover/call hierarchy with graceful fallback)~~ ✅
 5. ~~Local-embedding semantic search (`semantic_search`, hybrid BM25+vector reciprocal-rank fusion, lazy model download, incremental re-embedding)~~ ✅
-6. ~~Game-engine adapters: GDScript grammar (vendored wasm build), Godot scenes/autoloads, Unity prefabs/GUIDs, Unreal module graph + reflection search~~ ✅ — Godot editor LSP (TCP 6005) still to come
+6. ~~Game-engine adapters: GDScript grammar (vendored wasm build), Godot scenes/autoloads, Unity prefabs/GUIDs, Unreal module graph + reflection search, Godot editor LSP attach (TCP 6005, nightly-tested against a real editor)~~ ✅
 7. ~~Docs, benchmarks in CI (cold index 157k LOC ≈ 5 s, warm queries p95 < 10 ms), cross-platform CI, npm pack smoke~~ ✅ — npm publish + MCP registry submission pending
 
 Performance (vuejs/core, 157k LOC, 525 files): cold index **4.7 s**, warm tool calls

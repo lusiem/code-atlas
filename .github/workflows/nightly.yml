@@ -1,0 +1,31 @@
+name: Nightly
+
+# Integration tests against real external tools — too slow/flaky-prone for
+# every push, valuable as a daily signal. Currently: the Godot editor's
+# GDScript language server (test/godot-editor.test.ts, which skips itself
+# unless a Godot binary is available).
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  godot-lsp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Download Godot (pinned)
+        run: |
+          curl -sSLO https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_linux.x86_64.zip
+          echo "d6e382fb531019f85630c1f485a561a0d20c4a2344b6c3847735cfee7da812aa  Godot_v4.4.1-stable_linux.x86_64.zip" | sha256sum -c
+          unzip -q Godot_v4.4.1-stable_linux.x86_64.zip
+          chmod +x Godot_v4.4.1-stable_linux.x86_64
+      - name: Run Godot editor LSP tests
+        env:
+          GODOT_BIN: ${{ github.workspace }}/Godot_v4.4.1-stable_linux.x86_64
+        run: npx vitest run test/godot-editor.test.ts

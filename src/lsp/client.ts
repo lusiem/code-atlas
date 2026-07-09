@@ -1,13 +1,18 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { connect, type Socket } from 'node:net';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   createMessageConnection,
+  SocketMessageReader,
+  SocketMessageWriter,
   StreamMessageReader,
   StreamMessageWriter,
   type MessageConnection,
+  type MessageReader,
+  type MessageWriter,
 } from 'vscode-jsonrpc/node';
 import type { LanguageId } from '../types.js';
 import type {
@@ -24,9 +29,12 @@ export interface LaunchSpec {
   command: string;
   args: string[];
   initializationOptions?: unknown;
+  /** Attach to an already-running server over TCP instead of spawning. */
+  tcp?: { host: string; port: number };
 }
 
 const REQUEST_TIMEOUT_MS = 20_000;
+const TCP_CONNECT_TIMEOUT_MS = 3_000;
 
 interface OpenDoc {
   version: number;
@@ -34,12 +42,81 @@ interface OpenDoc {
 }
 
 /**
- * One LSP server process speaking JSON-RPC over stdio. Read-only client:
- * we never send edits, only open documents and ask questions.
+ * What the client needs from its wire: framed reader/writer, liveness, and a
+ * hard stop. `ownsServer` decides whether dispose() may shut the server down
+ * (we spawned it) or must only detach (someone else's process, e.g. the
+ * Godot editor).
+ */
+interface Transport {
+  reader: MessageReader;
+  writer: MessageWriter;
+  alive(): boolean;
+  onClose(cb: () => void): void;
+  kill(): void;
+  ownsServer: boolean;
+}
+
+function spawnTransport(launch: LaunchSpec): Transport {
+  // .cmd/.bat shims (npm global installs on Windows) need cmd.exe
+  const viaCmd = /\.(cmd|bat)$/i.test(launch.command);
+  const child = viaCmd
+    ? spawn('cmd.exe', ['/c', launch.command, ...launch.args], { stdio: ['pipe', 'pipe', 'pipe'] })
+    : spawn(launch.command, launch.args, { stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stderr?.on('data', () => {}); // drain; server logs are not ours to spam
+  return {
+    reader: new StreamMessageReader(child.stdout!),
+    writer: new StreamMessageWriter(child.stdin!),
+    alive: () => child.exitCode === null,
+    onClose: (cb) => child.on('exit', cb),
+    kill: () => {
+      setTimeout(() => {
+        if (child.exitCode === null) child.kill();
+      }, 1500).unref();
+    },
+    ownsServer: true,
+  };
+}
+
+function tcpTransport(host: string, port: number): Promise<Transport> {
+  return new Promise((resolve, reject) => {
+    const socket: Socket = connect({ host, port });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`connect timeout ${host}:${port}`));
+    }, TCP_CONNECT_TIMEOUT_MS);
+    timer.unref();
+    socket.once('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      socket.removeAllListeners('error');
+      socket.on('error', () => {}); // post-connect errors surface via 'close'
+      let closed = false;
+      socket.once('close', () => {
+        closed = true;
+      });
+      resolve({
+        reader: new SocketMessageReader(socket),
+        writer: new SocketMessageWriter(socket),
+        alive: () => !closed,
+        onClose: (cb) => socket.once('close', cb),
+        kill: () => socket.destroy(),
+        ownsServer: false,
+      });
+    });
+  });
+}
+
+/**
+ * One LSP server speaking Content-Length framed JSON-RPC — spawned over
+ * stdio, or attached over TCP (Godot editor). Read-only client: we never
+ * send edits, only open documents and ask questions.
  */
 export class LspClient {
   private constructor(
-    private readonly child: ChildProcess,
+    private readonly transport: Transport,
     private readonly connection: MessageConnection,
     private readonly rootDir: string,
     private readonly languageIds: Partial<Record<LanguageId, string>>,
@@ -55,19 +132,14 @@ export class LspClient {
     rootDir: string,
     languageIds: Partial<Record<LanguageId, string>>,
   ): Promise<LspClient> {
-    // .cmd/.bat shims (npm global installs on Windows) need cmd.exe
-    const viaCmd = /\.(cmd|bat)$/i.test(launch.command);
-    const child = viaCmd
-      ? spawn('cmd.exe', ['/c', launch.command, ...launch.args], { stdio: ['pipe', 'pipe', 'pipe'] })
-      : spawn(launch.command, launch.args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    child.stderr?.on('data', () => {}); // drain; server logs are not ours to spam
+    const transport = launch.tcp
+      ? await tcpTransport(launch.tcp.host, launch.tcp.port)
+      : spawnTransport(launch);
 
-    const connection = createMessageConnection(
-      new StreamMessageReader(child.stdout!),
-      new StreamMessageWriter(child.stdin!),
-    );
+    const connection = createMessageConnection(transport.reader, transport.writer);
     // servers push these regardless; ignore quietly
     connection.onNotification(() => {});
+    connection.onError(() => {}); // reader/writer errors surface as close/null answers
     connection.onRequest('workspace/configuration', (params: { items: unknown[] }) =>
       params.items.map(() => null),
     );
@@ -78,15 +150,15 @@ export class LspClient {
     ]);
     connection.listen();
 
-    const client = new LspClient(child, connection, rootDir, languageIds);
-    child.on('exit', () => {
+    const client = new LspClient(transport, connection, rootDir, languageIds);
+    transport.onClose(() => {
       if (!client.disposing) client.onUnexpectedExit?.();
     });
 
     const rootUri = pathToFileURL(rootDir).toString();
     // settle immediately if the server dies during startup instead of
     // waiting out the initialize timeout
-    const exited = new Promise<null>((r) => child.on('exit', () => r(null)));
+    const exited = new Promise<null>((r) => transport.onClose(() => r(null)));
     const initRequest = client.request('initialize', {
       processId: process.pid,
       rootUri,
@@ -109,16 +181,16 @@ export class LspClient {
     if (initResult === null) {
       client.disposing = true;
       connection.dispose();
-      child.kill();
+      transport.kill();
       throw new Error('LSP initialize failed or timed out');
     }
-    connection.sendNotification('initialized', {});
+    void connection.sendNotification('initialized', {}).catch(() => {});
     return client;
   }
 
-  /** True while the underlying process is alive. */
+  /** True while the underlying process/connection is alive. */
   get alive(): boolean {
-    return this.child.exitCode === null && !this.disposing;
+    return this.transport.alive() && !this.disposing;
   }
 
   private request<T>(method: string, params: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T | null> {
@@ -127,6 +199,11 @@ export class LspClient {
       req.catch(() => null),
       new Promise<null>((r) => setTimeout(() => r(null), timeoutMs).unref()),
     ]);
+  }
+
+  /** Fire-and-forget notification; write failures on a dying wire are not errors. */
+  private notify(method: string, params?: unknown): void {
+    void this.connection.sendNotification(method, params).catch(() => {});
   }
 
   private uriFor(relPath: string): string {
@@ -147,20 +224,20 @@ export class LspClient {
 
     const uri = this.uriFor(relPath);
     if (known) {
-      this.connection.sendNotification('textDocument/didClose', { textDocument: { uri } });
+      this.notify('textDocument/didClose', { textDocument: { uri } });
     }
     const ext = relPath.slice(relPath.lastIndexOf('.'));
     const lang = LANG_BY_EXT[ext];
     const languageId = (lang && this.languageIds[lang]) ?? 'plaintext';
     const version = (known?.version ?? 0) + 1;
-    this.connection.sendNotification('textDocument/didOpen', {
+    this.notify('textDocument/didOpen', {
       textDocument: { uri, languageId, version, text },
     });
     this.openDocs.set(relPath, { version, hash });
     // bound how many documents we keep open in the server
     if (this.openDocs.size > 40) {
       const oldest = this.openDocs.keys().next().value!;
-      this.connection.sendNotification('textDocument/didClose', {
+      this.notify('textDocument/didClose', {
         textDocument: { uri: this.uriFor(oldest) },
       });
       this.openDocs.delete(oldest);
@@ -174,13 +251,13 @@ export class LspClient {
     for (const rel of relPaths) {
       changes.push({ uri: this.uriFor(rel), type: 2 /* Changed */ });
       if (this.openDocs.delete(rel)) {
-        this.connection.sendNotification('textDocument/didClose', {
+        this.notify('textDocument/didClose', {
           textDocument: { uri: this.uriFor(rel) },
         });
       }
     }
     if (changes.length > 0) {
-      this.connection.sendNotification('workspace/didChangeWatchedFiles', { changes });
+      this.notify('workspace/didChangeWatchedFiles', { changes });
     }
   }
 
@@ -236,19 +313,22 @@ export class LspClient {
   async dispose(): Promise<void> {
     if (this.disposing) return;
     this.disposing = true;
-    try {
-      await Promise.race([
-        this.connection.sendRequest('shutdown', undefined),
-        new Promise((r) => setTimeout(r, 2000).unref()),
-      ]);
-      this.connection.sendNotification('exit');
-    } catch {
-      // already gone
+    if (this.transport.ownsServer) {
+      // we spawned it: ask it to exit, then make sure it does
+      try {
+        await Promise.race([
+          this.connection.sendRequest('shutdown', undefined),
+          new Promise((r) => setTimeout(r, 2000).unref()),
+        ]);
+        this.notify('exit');
+      } catch {
+        // already gone
+      }
     }
+    // attached servers (Godot editor) just get the socket closed — never
+    // shutdown/exit, the process is not ours
     this.connection.dispose();
-    setTimeout(() => {
-      if (this.child.exitCode === null) this.child.kill();
-    }, 1500).unref();
+    this.transport.kill();
   }
 }
 
@@ -264,4 +344,5 @@ const LANG_BY_EXT: Record<string, LanguageId> = {
   '.java': 'java',
   '.kt': 'kotlin', '.kts': 'kotlin',
   '.cs': 'c_sharp',
+  '.gd': 'gdscript',
 };

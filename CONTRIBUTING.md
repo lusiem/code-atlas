@@ -50,6 +50,13 @@ Add a `ServerSpec` in `src/lsp/registry.ts`. Acquisition kinds: `npm`, `go`,
 pin what you verified), `dotnet-tool`, `jdtls`. Gate on runtime detection
 (`findJava`/`findDotnet`) rather than failing at spawn. PATH always wins over the cache.
 
+Servers we can't spawn (the Godot editor's built-in LS) use `attach: { host, port }`
+instead: connect failures are a normal condition, retried on demand and never escalated
+to `failed`, and dispose only closes the socket — never send `shutdown`/`exit` to a
+process we don't own. Deterministic tests fake the endpoint (`test/helpers/fake-tcp-lsp.ts`);
+the real editor is exercised nightly (`test/godot-editor.test.ts`, self-skipping without
+a `GODOT_BIN`).
+
 ## Benchmarks
 
 `node scripts/bench.mjs <repo> [--assert]` — cold index + warm p50/p95 per tool. CI runs

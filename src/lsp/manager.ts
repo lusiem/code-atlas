@@ -80,11 +80,13 @@ export class LspManager {
     try {
       entry.launch ??=
         entry.spec.launch ??
-        (await ensureServer(entry.spec, {
-          download: this.opts.download,
-          cacheDir: this.opts.cacheDir ?? defaultCacheDir(),
-          rootDir: this.rootDir,
-        }));
+        (entry.spec.attach
+          ? { command: '', args: [], tcp: entry.spec.attach }
+          : await ensureServer(entry.spec, {
+              download: this.opts.download,
+              cacheDir: this.opts.cacheDir ?? defaultCacheDir(),
+              rootDir: this.rootDir,
+            }));
       if (!entry.launch) {
         entry.state = 'unavailable';
         entry.note = entry.spec.installHint;
@@ -98,15 +100,25 @@ export class LspManager {
       this.touch(entry);
       return client;
     } catch (err) {
-      entry.note = err instanceof Error ? err.message : String(err);
+      entry.note = entry.spec.attach
+        ? entry.spec.installHint
+        : err instanceof Error
+          ? err.message
+          : String(err);
       return this.onCrash(entry), null;
     }
   }
 
   private onCrash(entry: Entry): void {
     entry.client = null;
-    entry.crashes++;
     if (entry.idleTimer) clearTimeout(entry.idleTimer);
+    // attach servers come and go with their host app (the Godot editor);
+    // an unreachable or dropped connection is normal — retry on demand
+    if (entry.spec.attach) {
+      entry.state = 'available';
+      return;
+    }
+    entry.crashes++;
     entry.state = entry.crashes >= MAX_CRASHES ? 'failed' : 'available';
     if (entry.state === 'failed') {
       console.error(`[code-atlas] ${entry.spec.id} failed ${entry.crashes}x — structural-only for this session`);
@@ -140,7 +152,13 @@ export class LspManager {
       switch (entry.state) {
         case 'running': detail = 'running'; break;
         case 'starting': detail = 'starting'; break;
-        case 'available': detail = entry.crashes > 0 ? `idle (${entry.crashes} crashes)` : 'on demand'; break;
+        case 'available':
+          detail = entry.crashes > 0
+            ? `idle (${entry.crashes} crashes)`
+            : entry.spec.attach && entry.note
+              ? `not connected — ${entry.note}`
+              : 'on demand';
+          break;
         case 'failed': detail = `failed — structural-only (${entry.note ?? 'crashed repeatedly'})`; break;
         case 'unavailable': detail = `not found — ${entry.note ?? 'not installed'}`; break;
       }
