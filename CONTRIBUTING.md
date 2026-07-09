@@ -57,6 +57,13 @@ process we don't own. Deterministic tests fake the endpoint (`test/helpers/fake-
 the real editor is exercised nightly (`test/godot-editor.test.ts`, self-skipping without
 a `GODOT_BIN`).
 
+## Testing the published package
+
+Don't run `npx -y @lusiem/code-atlas` from inside this repo: npm resolves the
+spec to the current project (same package name) instead of the registry, finds
+no installed bin shim, and fails with a confusing "'code-atlas' is not
+recognized". Run it from any other directory.
+
 ## Benchmarks
 
 `node scripts/bench.mjs <repo> [--assert]` — cold index + warm p50/p95 per tool. CI runs
