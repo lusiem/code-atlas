@@ -23,7 +23,7 @@ Claude Code ◄──────────── MCP tools over stdio ──�
 ## Install & use with Claude Code
 
 ```sh
-claude mcp add code-atlas -- npx -y code-atlas serve
+claude mcp add code-atlas -- npx -y @lusiem/code-atlas serve
 ```
 
 Or from a clone:

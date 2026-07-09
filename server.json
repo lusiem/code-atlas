@@ -10,7 +10,7 @@
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "code-atlas",
+      "identifier": "@lusiem/code-atlas",
       "version": "0.2.0",
       "transport": {
         "type": "stdio"
