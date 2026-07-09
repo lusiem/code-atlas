@@ -8,6 +8,7 @@ import { compileQuery, parse } from '../parsing/loader.js';
 import { semanticSearch } from '../embeddings/search.js';
 import { lspHoverFor } from '../lsp/overlay.js';
 import { formatSymbolLine, kindPrefix, paginationFooter, readSnippet } from './format.js';
+import { registerDiagramTool } from './diagram.js';
 import { registerEngineTools } from './engines.js';
 import { registerGraphTools } from './graph.js';
 import { readFileSync } from 'node:fs';
@@ -41,6 +42,7 @@ function normalizeRel(ctx: AppContext, p: string): string {
 export function registerTools(server: McpServer, ctx: AppContext): void {
   registerGraphTools(server, ctx);
   registerEngineTools(server, ctx);
+  registerDiagramTool(server, ctx);
 
   server.registerTool(
     'project_overview',

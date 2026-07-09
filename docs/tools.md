@@ -88,6 +88,28 @@ call path (2 hops):
 function report (src/report.ts:12) -> function calculate (src/calc.ts:8) -> function add (src/math.ts:5)
 ```
 
+### `generate_diagram` — `{kind: imports|calls|types|call_path, …}`
+The graph tools rendered as Mermaid instead of text — the output is a ` ```mermaid ` fence ready to
+paste into GitHub markdown, docs, or any Mermaid viewer. `imports` draws the workspace import graph
+(file-level with directory subgraphs, or collapsed to directories via `granularity`; scope with
+`path_prefix`); `calls` draws the call graph around one symbol (`direction: in|out|both`, `depth`);
+`types` draws inheritance around one type; `call_path` draws the shortest call chain between two
+symbols. Dotted arrows mark low-confidence structural edges (< 0.70).
+````
+call graph around function calculate (src/calculator.ts:4), arrows caller -> callee:
+
+```mermaid
+flowchart LR
+  n0["calculate"]
+  n1["report"]
+  n2["add"]
+  n1 --> n0
+  n0 --> n2
+  classDef focus stroke-width:3px
+  class n0 focus
+```
+````
+
 ## Game engines
 
 ### `get_scene_structure` — `{path}`

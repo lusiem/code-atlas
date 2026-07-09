@@ -58,3 +58,49 @@ export function paginationFooter(shown: number, limit: number, offset: number): 
   if (shown < limit) return '';
   return `\n(showing ${offset + 1}–${offset + shown}; pass offset=${offset + limit} for more)`;
 }
+
+const NON_CALLABLE_KINDS: ReadonlySet<string> = new Set([
+  'interface', 'trait', 'enum', 'type_alias', 'struct',
+]);
+const TYPE_LIKE_KINDS: ReadonlySet<string> = new Set([
+  'class', 'interface', 'struct', 'trait', 'enum', 'type_alias',
+]);
+
+/**
+ * Explains an empty call/type graph as an answer, not a failure: wrong-kind targets get a
+ * redirect, genuinely edge-less symbols get "stands alone" plus an honest coverage hedge.
+ * For family 'types', direction 'out' means supertypes and 'in' subtypes (edges point
+ * subtype -> supertype).
+ */
+export function emptyGraphNote(
+  sym: Pick<SymbolRow, 'kind' | 'qualifiedName' | 'path'>,
+  family: 'calls' | 'types',
+  direction: 'in' | 'out' | 'both',
+): string {
+  const who = `${sym.kind} ${sym.qualifiedName}`;
+  if (family === 'calls') {
+    if (NON_CALLABLE_KINDS.has(sym.kind)) {
+      return `${who} is not callable — call graphs cover functions and methods; its type hierarchy may be what you want`;
+    }
+    if (sym.kind === 'class') {
+      return `${who} has no call edges in the index — calls attach to its methods and constructor; target one of those (get_file_outline ${sym.path} lists them)`;
+    }
+    const what =
+      direction === 'in'
+        ? 'nothing in the index calls it'
+        : direction === 'out'
+          ? 'it calls nothing the resolver could see'
+          : 'nothing in the index calls it, and it calls nothing the resolver could see';
+    return `${who}: ${what} (structural index — dynamic or indirect calls may be missing)`;
+  }
+  if (!TYPE_LIKE_KINDS.has(sym.kind)) {
+    return `${who} is not a type — inheritance diagrams cover classes, interfaces, structs, and traits; its call graph may be what you want`;
+  }
+  const what =
+    direction === 'out'
+      ? 'no supertypes in the index'
+      : direction === 'in'
+        ? 'no subtypes in the index'
+        : 'no supertypes or subtypes in the index — it stands alone';
+  return `${who}: ${what} (cross-file inheritance resolves heuristically — a missed link is possible)`;
+}

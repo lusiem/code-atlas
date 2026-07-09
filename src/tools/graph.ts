@@ -4,7 +4,7 @@ import { relative, sep } from 'node:path';
 import type { AppContext } from '../context.js';
 import type { EdgeKind, SymbolRow } from '../types.js';
 import { lspCallHierarchy, lspReferences, relFromUri } from '../lsp/overlay.js';
-import { formatSymbolLine, paginationFooter } from './format.js';
+import { emptyGraphNote, formatSymbolLine, paginationFooter } from './format.js';
 
 function text(s: string) {
   return { content: [{ type: 'text' as const, text: s }] };
@@ -19,14 +19,14 @@ function normalizeRel(ctx: AppContext, p: string): string {
 }
 
 /** Shared `symbol_id | path+line | name` target schema for graph tools. */
-const symbolArgs = {
+export const symbolArgs = {
   symbol_id: z.number().int().optional().describe('symbol id from search_symbols / get_file_outline'),
   path: z.string().optional().describe('with line: innermost symbol at that position'),
   line: z.number().int().min(1).optional(),
   name: z.string().optional().describe('exact symbol name (must be unambiguous)'),
 };
 
-interface SymbolArgIn {
+export interface SymbolArgIn {
   symbol_id?: number | undefined;
   path?: string | undefined;
   line?: number | undefined;
@@ -35,7 +35,7 @@ interface SymbolArgIn {
 
 type Found = { ok: true; sym: SymbolRow } | { ok: false; message: string };
 
-function findSymbol(ctx: AppContext, args: SymbolArgIn, prefix = ''): Found {
+export function findSymbol(ctx: AppContext, args: SymbolArgIn, prefix = ''): Found {
   const { store } = ctx;
   const p = (k: string): string => (prefix ? `${prefix}${k}` : k);
   if (args.symbol_id !== undefined) {
@@ -73,8 +73,40 @@ function confidenceTag(confidence: number, provenance: string): string {
   return `[${provenance} ${confidence.toFixed(2)}]`;
 }
 
-const CALL_KINDS: EdgeKind[] = ['calls'];
-const TYPE_KINDS: EdgeKind[] = ['extends', 'implements'];
+export const CALL_KINDS: EdgeKind[] = ['calls'];
+export const TYPE_KINDS: EdgeKind[] = ['extends', 'implements'];
+
+/** BFS over outgoing call edges; returns the symbol-id chain from -> to, or null. */
+export function shortestCallPath(
+  ctx: AppContext,
+  fromId: number,
+  toId: number,
+  maxDepth: number,
+): number[] | null {
+  const prev = new Map<number, number>();
+  const queue: number[] = [fromId];
+  const depthOf = new Map<number, number>([[fromId, 0]]);
+  let foundTarget = false;
+  while (queue.length > 0 && !foundTarget) {
+    const cur = queue.shift()!;
+    const depth = depthOf.get(cur)!;
+    if (depth >= maxDepth) continue;
+    for (const e of ctx.store.edgesFor(cur, 'out', CALL_KINDS)) {
+      if (depthOf.has(e.symbolId)) continue;
+      depthOf.set(e.symbolId, depth + 1);
+      prev.set(e.symbolId, cur);
+      if (e.symbolId === toId) {
+        foundTarget = true;
+        break;
+      }
+      queue.push(e.symbolId);
+    }
+  }
+  if (!foundTarget) return null;
+  const chain: number[] = [toId];
+  while (chain[0] !== fromId) chain.unshift(prev.get(chain[0]!)!);
+  return chain;
+}
 
 /** BFS tree rendering over edges, cycle-safe. */
 function renderHierarchy(
@@ -191,7 +223,7 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
       if (precise && precise.length > 0) return text(`${header}\n${precise.join('\n')}`);
 
       const lines = renderHierarchy(ctx, sym.id, direction, CALL_KINDS, args.depth, 25);
-      if (lines.length === 0) return text(`${header}\n(none found in the index)`);
+      if (lines.length === 0) return text(`${header}\n${emptyGraphNote(sym, 'calls', direction)}`);
       return text(`${header}\n${lines.join('\n')}`);
     },
   );
@@ -267,7 +299,7 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
       const dir = args.direction === 'super' ? 'out' : 'in';
       const lines = renderHierarchy(ctx, sym.id, dir, TYPE_KINDS, args.depth, 50);
       const header = `${args.direction === 'super' ? 'supertypes of' : 'subtypes of'} ${sym.kind} ${sym.qualifiedName} (${sym.path}:${sym.startLine}) #${sym.id}`;
-      if (lines.length === 0) return text(`${header}\n(none found in the index)`);
+      if (lines.length === 0) return text(`${header}\n${emptyGraphNote(sym, 'types', dir)}`);
       return text(`${header}\n${lines.join('\n')}`);
     },
   );
@@ -324,34 +356,12 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
       const to = findSymbol(ctx, { symbol_id: args.to_id, name: args.to_name }, 'to_');
       if (!to.ok) return text(to.message);
 
-      // BFS forward over call edges
-      const prev = new Map<number, number>();
-      const queue: number[] = [from.sym.id];
-      const depthOf = new Map<number, number>([[from.sym.id, 0]]);
-      let foundTarget = false;
-      while (queue.length > 0 && !foundTarget) {
-        const cur = queue.shift()!;
-        const depth = depthOf.get(cur)!;
-        if (depth >= args.max_depth) continue;
-        for (const e of ctx.store.edgesFor(cur, 'out', CALL_KINDS)) {
-          if (depthOf.has(e.symbolId)) continue;
-          depthOf.set(e.symbolId, depth + 1);
-          prev.set(e.symbolId, cur);
-          if (e.symbolId === to.sym.id) {
-            foundTarget = true;
-            break;
-          }
-          queue.push(e.symbolId);
-        }
-      }
-
-      if (!foundTarget) {
+      const chain = shortestCallPath(ctx, from.sym.id, to.sym.id, args.max_depth);
+      if (!chain) {
         return text(
           `no call path from ${from.sym.qualifiedName} to ${to.sym.qualifiedName} within depth ${args.max_depth} (structural index only — indirect/dynamic calls may be missing)`,
         );
       }
-      const chain: number[] = [to.sym.id];
-      while (chain[0] !== from.sym.id) chain.unshift(prev.get(chain[0]!)!);
       const lines = chain.map((id, i) => {
         const s = ctx.store.getSymbolById(id)!;
         return `${'  '.repeat(i)}${i > 0 ? '-> ' : ''}${s.kind} ${s.qualifiedName} (${s.path}:${s.startLine}) #${s.id}`;

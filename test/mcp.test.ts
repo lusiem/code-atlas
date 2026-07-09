@@ -46,6 +46,7 @@ describe('MCP server end-to-end', () => {
       'call_hierarchy',
       'find_asset_references',
       'find_references',
+      'generate_diagram',
       'get_dependencies',
       'get_file_outline',
       'get_scene_structure',
@@ -153,6 +154,79 @@ describe('MCP server end-to-end', () => {
   it('trace_path reports unreachable pairs honestly', async () => {
     const text = await callText('trace_path', { from_name: 'add', to_name: 'report' });
     expect(text).toContain('no call path');
+  });
+
+  it('generate_diagram kind=imports draws the file import graph', async () => {
+    const text = await callText('generate_diagram', { kind: 'imports' });
+    expect(text).toContain('```mermaid');
+    expect(text).toContain('flowchart LR');
+    expect(text).toContain('subgraph d0["src"]');
+    expect(text).toContain('["calculator.ts"]');
+    // calculator.ts -> math.ts and math.ts -> logger.ts edges exist
+    const arrows = text.match(/n\d+ --> n\d+/g) ?? [];
+    expect(arrows.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('generate_diagram kind=imports granularity=dir collapses to directories', async () => {
+    const text = await callText('generate_diagram', { kind: 'imports', granularity: 'dir' });
+    // every fixture file lives in src/, so there is nothing cross-directory to draw
+    expect(text).toContain('single directory');
+  });
+
+  it('generate_diagram kind=calls centers on a symbol', async () => {
+    const text = await callText('generate_diagram', { kind: 'calls', name: 'calculate', depth: 2 });
+    expect(text).toContain('call graph around function calculate');
+    expect(text).toContain('```mermaid');
+    expect(text).toContain('["report"]');
+    expect(text).toContain('["add"]');
+    expect(text).toContain('classDef focus');
+  });
+
+  it('generate_diagram kind=types labels inheritance edges', async () => {
+    const text = await callText('generate_diagram', { kind: 'types', name: 'Shape' });
+    expect(text).toContain('type hierarchy around interface Shape');
+    expect(text).toContain('flowchart BT');
+    expect(text).toContain('["Circle"]');
+    expect(text).toMatch(/n\d+ -\.?-?>?\|implements\| n\d+/);
+  });
+
+  it('generate_diagram kind=call_path renders the chain', async () => {
+    const text = await callText('generate_diagram', { kind: 'call_path', from_name: 'report', to_name: 'add' });
+    expect(text).toContain('call path report -> add (2 hops):');
+    expect(text).toContain('["report<br/>src/calculator.ts:12"]');
+    expect(text).toMatch(/n0 --> n1[\s\S]*n1 --> n2/);
+  });
+
+  it('generate_diagram kind=types on a non-type redirects to calls', async () => {
+    const text = await callText('generate_diagram', { kind: 'types', name: 'add' });
+    expect(text).toContain('function add is not a type');
+    expect(text).toContain('call graph may be what you want');
+  });
+
+  it('generate_diagram kind=types on a standalone type says so', async () => {
+    const text = await callText('generate_diagram', { kind: 'types', name: 'Color' });
+    expect(text).toContain('enum Color: no supertypes or subtypes in the index — it stands alone');
+  });
+
+  it('generate_diagram kind=calls on a non-callable redirects to types', async () => {
+    const text = await callText('generate_diagram', { kind: 'calls', name: 'Shape' });
+    expect(text).toContain('interface Shape is not callable');
+    expect(text).toContain('type hierarchy may be what you want');
+  });
+
+  it('call_hierarchy explains an empty result per direction', async () => {
+    const text = await callText('call_hierarchy', { name: 'multiply', direction: 'out' });
+    expect(text).toContain('it calls nothing the resolver could see');
+  });
+
+  it('type_hierarchy explains an empty result per direction', async () => {
+    const text = await callText('type_hierarchy', { name: 'Color', direction: 'sub' });
+    expect(text).toContain('enum Color: no subtypes in the index');
+  });
+
+  it('generate_diagram reports missing symbols gracefully', async () => {
+    const text = await callText('generate_diagram', { kind: 'calls', name: 'doesNotExist' });
+    expect(text).toContain('no symbol named "doesNotExist"');
   });
 
   it('semantic_search degrades to keyword-only without an embedder', async () => {

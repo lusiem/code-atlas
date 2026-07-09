@@ -62,6 +62,7 @@ Full reference with example outputs: [docs/tools.md](docs/tools.md).
 | `type_hierarchy` | Supertypes and subtypes over extends/implements edges. |
 | `get_dependencies` | File import graph, both directions (imports / imported-by). |
 | `trace_path` | Shortest call chain between two symbols. |
+| `generate_diagram` | Mermaid diagrams of the above graphs: import graph (file or directory level), call graph around a symbol, type hierarchy, call path — paste straight into GitHub markdown or docs. |
 | `get_scene_structure` | Godot scene node tree with attached scripts, instanced sub-scenes, and signal connections (handlers resolved to symbols). |
 | `find_asset_references` | Which scenes/prefabs use this script? Reverse lookup across Godot res:// paths, Unity GUIDs (via .meta), and Unreal modules. |
 | `search_reflection` | All `UPROPERTY(Replicated)`, `[SerializeField]`, `@export` vars, signals — engine reflection markers across the workspace. |

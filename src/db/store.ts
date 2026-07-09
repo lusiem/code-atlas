@@ -602,6 +602,19 @@ export class Store {
       .all(fileId) as Array<{ path: string; specifier: string; startLine: number }>;
   }
 
+  /** Every workspace-internal import pair (src imports dst), deduplicated. */
+  importPairs(): Array<{ src: string; dst: string }> {
+    return this.db
+      .prepare(
+        `SELECT DISTINCT fs.path AS src, fd.path AS dst
+         FROM imports i
+         JOIN files fs ON fs.id = i.file_id
+         JOIN files fd ON fd.id = i.resolved_file_id
+         ORDER BY src, dst`,
+      )
+      .all() as Array<{ src: string; dst: string }>;
+  }
+
   countsByLanguage(): Array<{ lang: LanguageId; files: number; symbols: number }> {
     return this.db
       .prepare(
