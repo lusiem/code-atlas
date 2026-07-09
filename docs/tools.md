@@ -133,9 +133,11 @@ Assets/Player.prefab (unity prefab)  script: Assets/PlayerController.cs (guid aa
 ```
 
 ### `search_reflection` — `{specifier}`
-Engine reflection markers: `UPROPERTY`, `BlueprintCallable`, `[SerializeField]`, `@export`, `signal`:
+Engine reflection markers: `UPROPERTY`, `BlueprintCallable`, `[SerializeField]`, `@export`, `signal`.
+Unreal macros (multi-line specifiers included) are captured onto the annotated symbol at index
+time, so answers come from the index with symbol ids:
 ```
-Source/Game/MyActor.h:18  UFUNCTION(BlueprintCallable, Category = "Combat")  void Fire();
+Source/Game/MyActor.h:19  UFUNCTION(BlueprintCallable, Category = "Combat")  void Fire(); #212
 2d/dodge_the_creeps/player.gd:5  [gdscript] variable speed: @export var speed = 400 #64
 ```
 

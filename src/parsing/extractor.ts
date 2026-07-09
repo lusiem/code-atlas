@@ -29,6 +29,16 @@ export interface LanguageExtractor {
    * are dropped automatically.
    */
   occurrenceQuery?: string;
+  /**
+   * Source cleanup applied before parsing. MUST preserve offsets (replace,
+   * never insert/delete) so every extracted position stays valid against the
+   * file on disk — e.g. blanking C++ dllexport macros with spaces.
+   */
+  preprocess?(source: string): string;
+  /** Drop matched definitions that are grammar artifacts, not code (GENERATED_BODY). */
+  skipSymbol?(name: string, kind: SymbolKind): boolean;
+  /** Post-pass over extracted symbols, e.g. attaching engine reflection metadata. */
+  enrich?(symbols: ExtractedSymbol[], source: string): void;
   /** Extract import statements by walking the tree (import shapes vary too much for one query convention). */
   extractImports?(tree: Tree, source: string): ExtractedImport[];
   isExported?(defNode: Node, nameText: string): boolean;
@@ -52,8 +62,9 @@ interface RawSymbol extends ExtractedSymbol {
 
 export async function extractFile(
   extractor: LanguageExtractor,
-  source: string,
+  rawSource: string,
 ): Promise<FileExtraction> {
+  const source = extractor.preprocess ? extractor.preprocess(rawSource) : rawSource;
   const tree = await parse(extractor.id, source);
   try {
     const query = await compileQuery(extractor.id, extractor.symbolQuery);
@@ -81,7 +92,8 @@ export async function extractFile(
       if (prev && prev.patternIndex <= match.patternIndex) continue;
 
       const name = nameNode.text;
-      nameNodeIds.add(nameNode.id);
+      nameNodeIds.add(nameNode.id); // even when skipped: never count a definition name as a usage
+      if (extractor.skipSymbol?.(name, kind)) continue;
       byDefName.set(key, {
         patternIndex: match.patternIndex,
         raw: {
@@ -114,6 +126,8 @@ export async function extractFile(
         sym.kind = extractor.reclassify(sym.kind, sym.name, parent?.kind ?? null, parent?.name ?? null);
       }
     }
+
+    extractor.enrich?.(symbols, source);
 
     const imports = extractor.extractImports ? extractor.extractImports(tree, source) : [];
 

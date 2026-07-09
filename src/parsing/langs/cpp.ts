@@ -1,6 +1,6 @@
 import type { Node, Tree } from 'web-tree-sitter';
 import type { LanguageExtractor } from '../extractor.js';
-import type { ExtractedImport, SymbolBase, SymbolKind } from '../../types.js';
+import type { ExtractedImport, ExtractedSymbol, SymbolBase, SymbolKind } from '../../types.js';
 
 /**
  * C++ (also used, minus C++-only node types, as the template for C).
@@ -97,10 +97,108 @@ export function extractIncludeImports(tree: Tree, _source: string): ExtractedImp
   return imports;
 }
 
+/**
+ * `class MYGAME_API AMyActor : ...` — the dllexport macro between the keyword
+ * and the name breaks tree-sitter's class_specifier, losing the class and its
+ * bases entirely (Unreal *_API, generic *_EXPORT). Blank it with spaces:
+ * offsets are preserved, and collapsed signatures read cleanly.
+ */
+const EXPORT_MACRO_RE = /(\b(?:class|struct)\s+)([A-Z][A-Z0-9_]*_(?:API|EXPORT))(?=\s+[A-Za-z_])/g;
+
+function preprocess(source: string): string {
+  if (!/_API\b|_EXPORT\b/.test(source)) return source;
+  return source.replace(EXPORT_MACRO_RE, (_m, head: string, macro: string) => head + ' '.repeat(macro.length));
+}
+
+/**
+ * Unreal's GENERATED_BODY()/GENERATED_USTRUCT_BODY() parse as method
+ * declarations, and the reflection macros themselves do too when their
+ * specifiers get complex (UPROPERTY(..., Category = "X")). None are code.
+ */
+function skipSymbol(name: string): boolean {
+  return (
+    /^GENERATED_(?:[A-Z]+_)?BODY$/.test(name) ||
+    /^(?:UCLASS|USTRUCT|UENUM|UINTERFACE|UFUNCTION|UPROPERTY|UDELEGATE)$/.test(name)
+  );
+}
+
+const REFLECTION_MACRO_RE = /\b(UCLASS|USTRUCT|UENUM|UINTERFACE|UFUNCTION|UPROPERTY|UDELEGATE)\s*\(/g;
+
+/**
+ * Attach Unreal reflection macros to the declaration they annotate, as the
+ * leading line(s) of its doc comment — searchable via FTS/search_reflection
+ * and visible in get_symbol_info. Handles specifiers spanning lines
+ * (`UPROPERTY(EditAnywhere,\n  meta = (...))`).
+ */
+function enrichUnrealReflection(symbols: ExtractedSymbol[], source: string): void {
+  if (!REFLECTION_MACRO_RE.test(source)) return;
+  REFLECTION_MACRO_RE.lastIndex = 0;
+
+  const lineStarts = [0];
+  for (let i = 0; i < source.length; i++) {
+    if (source[i] === '\n') lineStarts.push(i + 1);
+  }
+  const lineOf = (offset: number): number => {
+    let lo = 0;
+    let hi = lineStarts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lineStarts[mid]! <= offset) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo + 1; // 1-based
+  };
+  const isBlankLine = (line: number): boolean => {
+    const start = lineStarts[line - 1]!;
+    const end = line < lineStarts.length ? lineStarts[line]! : source.length;
+    return source.slice(start, end).trim() === '';
+  };
+
+  const byStartLine = new Map<number, ExtractedSymbol[]>();
+  for (const s of symbols) {
+    const list = byStartLine.get(s.startLine) ?? [];
+    list.push(s);
+    byStartLine.set(s.startLine, list);
+  }
+
+  for (const m of source.matchAll(REFLECTION_MACRO_RE)) {
+    // must be the first thing on its line — skips mentions in comments/strings
+    const lineStart = lineStarts[lineOf(m.index) - 1]!;
+    if (source.slice(lineStart, m.index).trim() !== '') continue;
+
+    // matching close paren, macro args may span lines
+    const openIdx = m.index + m[0].length - 1;
+    let depth = 0;
+    let closeIdx = -1;
+    for (let k = openIdx; k < source.length && k - openIdx < 2000; k++) {
+      if (source[k] === '(') depth++;
+      else if (source[k] === ')' && --depth === 0) {
+        closeIdx = k;
+        break;
+      }
+    }
+    if (closeIdx === -1) continue;
+    const macroText = source.slice(m.index, closeIdx + 1).replace(/\s+/g, ' ');
+
+    // the annotated declaration starts on the next non-blank line (or shares the macro's)
+    let declLine = lineOf(closeIdx);
+    if (!byStartLine.has(declLine)) {
+      declLine++;
+      while (declLine <= lineStarts.length && isBlankLine(declLine)) declLine++;
+    }
+    for (const sym of byStartLine.get(declLine) ?? []) {
+      sym.docComment = sym.docComment ? `${macroText}\n${sym.docComment}` : macroText;
+    }
+  }
+}
+
 export const cppExtractor: LanguageExtractor = {
   id: 'cpp',
   symbolQuery: CPP_QUERY,
   occurrenceQuery: CPP_OCCURRENCES,
+  preprocess,
+  skipSymbol,
+  enrich: enrichUnrealReflection,
   extractImports: extractIncludeImports,
   // structural layer cannot see access specifiers cheaply; headers are the
   // public surface in C++, so default everything to exported

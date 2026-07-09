@@ -833,6 +833,17 @@ export class Store {
       .all(...params) as unknown as SymbolRow[];
     return normalize(rows);
   }
+
+  /** Symbols whose doc comment contains the needle (reflection metadata lives there). */
+  symbolsWithDocLike(needle: string, limit: number): SymbolRow[] {
+    const rows = this.db
+      .prepare(
+        `${SYMBOL_SELECT} WHERE s.doc_comment LIKE ? ESCAPE '\\'
+         ORDER BY f.path, s.start_line LIMIT ?`,
+      )
+      .all(`%${escapeLike(needle)}%`, limit) as unknown as SymbolRow[];
+    return normalize(rows);
+  }
 }
 
 export interface ImportRow {

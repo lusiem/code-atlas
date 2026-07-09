@@ -144,8 +144,8 @@ export function registerEngineTools(server: McpServer, ctx: AppContext): void {
       description:
         'Find engine-reflected declarations: Unreal UCLASS/UPROPERTY/UFUNCTION specifiers ' +
         '(e.g. "BlueprintCallable", "Replicated"), Unity attributes ("[SerializeField]"), and Godot ' +
-        'annotations ("@export", "@onready") or signals. Searches indexed C++ headers on demand and ' +
-        'declaration signatures in the index.',
+        'annotations ("@export", "@onready") or signals. Answers from the index: declaration ' +
+        'signatures plus Unreal reflection macros captured onto the annotated symbol.',
       inputSchema: {
         specifier: z
           .string()
@@ -169,36 +169,21 @@ export function registerEngineTools(server: McpServer, ctx: AppContext): void {
         lines.push(`${s.path}:${s.startLine}  [${s.lang}] ${s.kind} ${s.qualifiedName}: ${s.signature} #${s.id}`);
       }
 
-      // Unreal: reflection macros sit above declarations — scan indexed headers
-      const macroRe = /^\s*(UCLASS|USTRUCT|UENUM|UINTERFACE|UPROPERTY|UFUNCTION|UDELEGATE)\s*\(([^)]*)\)/;
+      // Unreal: reflection macros are captured onto the annotated symbol's doc
+      // comment at index time (see cpp extractor enrich pass)
       const wantMacro = /^U[A-Z]+$/.test(spec);
-      const headers = ctx.store
-        .listFiles()
-        .filter((f) => (f.lang === 'cpp' || f.lang === 'c') && /\.(h|hpp|hxx)$/.test(f.path));
-      for (const file of headers) {
+      const macroLineRe = /^U[A-Z]+\(.*\)/;
+      for (const s of ctx.store.symbolsWithDocLike(wantMacro ? `${spec}(` : spec, args.limit * 2)) {
         if (lines.length >= args.limit) break;
-        let source: string;
-        try {
-          source = readFileSync(join(ctx.config.root, file.path), 'utf8');
-        } catch {
-          continue;
-        }
-        if (!source.includes(wantMacro ? spec : spec.replace(/^"|"$/g, ''))) continue;
-        const fileLines = source.split('\n');
-        for (let i = 0; i < fileLines.length && lines.length < args.limit; i++) {
-          const m = macroRe.exec(fileLines[i]!);
-          if (!m) continue;
-          const matches = wantMacro
-            ? m[1] === spec
-            : m[2]!.toLowerCase().includes(spec.toLowerCase());
-          if (!matches) continue;
-          // the declaration follows the macro line
-          const decl = fileLines
-            .slice(i + 1, i + 3)
-            .map((l) => l.trim())
-            .find((l) => l.length > 0 && !macroRe.test(l));
-          lines.push(`${file.path}:${i + 1}  ${m[1]}(${m[2]!.trim()})  ${decl ?? ''}`.trimEnd());
-        }
+        const hit = (s.docComment ?? '')
+          .split('\n')
+          .find(
+            (l) =>
+              macroLineRe.test(l) &&
+              (wantMacro ? l.startsWith(`${spec}(`) : l.toLowerCase().includes(spec.toLowerCase())),
+          );
+        if (!hit) continue; // needle matched prose, not a reflection macro
+        lines.push(`${s.path}:${s.startLine}  ${hit}  ${s.signature ?? s.name} #${s.id}`);
       }
 
       if (lines.length === 0) return text(`no reflection markers matching "${spec}"`);

@@ -99,6 +99,86 @@ describe('cpp extractor', () => {
   });
 });
 
+const UNREAL_SRC = `#pragma once
+#include "MyActor.generated.h"
+
+UCLASS(Blueprintable, BlueprintType)
+class MYGAME_API AMyActor : public AActor
+{
+	GENERATED_BODY()
+
+public:
+	AMyActor();
+
+	UFUNCTION(BlueprintCallable, Category = "Combat")
+	void Fire(int32 Ammo);
+
+	UPROPERTY(EditAnywhere, Replicated,
+		meta = (ClampMin = "0"))
+	float Health = 100.0f;
+
+protected:
+	virtual void BeginPlay() override;
+};
+
+USTRUCT(BlueprintType)
+struct FDamageInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere)
+	float Amount = 0.0f;
+};
+`;
+
+describe('cpp extractor on Unreal headers', () => {
+  const resultP = extractFile(cppExtractor, UNREAL_SRC);
+
+  it('extracts UCLASS classes despite the dllexport macro, bases intact', async () => {
+    const result = await resultP;
+    const actor = result.symbols.find((s) => s.name === 'AMyActor' && s.kind === 'class');
+    expect(actor).toBeDefined();
+    expect(actor!.bases).toEqual([{ name: 'AActor', kind: 'extends' }]);
+    // the blanked macro must not bleed into the signature
+    expect(actor!.signature).toBe('class AMyActor : public AActor');
+  });
+
+  it('members belong to the class, not the file', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('Fire')!.kind).toBe('method');
+    expect(parentOf(result, byName.get('Fire')!)).toBe('AMyActor');
+    expect(byName.get('Health')!.kind).toBe('field');
+    expect(parentOf(result, byName.get('Health')!)).toBe('AMyActor');
+    const ctor = result.symbols.find((s) => s.name === 'AMyActor' && s.kind === 'constructor');
+    expect(ctor).toBeDefined();
+  });
+
+  it('suppresses GENERATED_BODY and bare macro artifacts', async () => {
+    const result = await resultP;
+    const names = result.symbols.map((s) => s.name);
+    expect(names).not.toContain('GENERATED_BODY');
+    expect(names).not.toContain('UPROPERTY');
+    expect(names).not.toContain('UFUNCTION');
+  });
+
+  it('attaches reflection macros to the annotated symbol, multi-line included', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    const actor = result.symbols.find((s) => s.name === 'AMyActor' && s.kind === 'class')!;
+    expect(actor.docComment).toBe('UCLASS(Blueprintable, BlueprintType)');
+    expect(byName.get('Fire')!.docComment).toBe('UFUNCTION(BlueprintCallable, Category = "Combat")');
+    // specifiers spanning lines collapse to one
+    expect(byName.get('Health')!.docComment).toBe(
+      'UPROPERTY(EditAnywhere, Replicated, meta = (ClampMin = "0"))',
+    );
+    expect(byName.get('FDamageInfo')!.docComment).toBe('USTRUCT(BlueprintType)');
+    expect(byName.get('Amount')!.docComment).toBe('UPROPERTY(EditAnywhere)');
+    // un-annotated members stay clean
+    expect(byName.get('BeginPlay')!.docComment).toBeNull();
+  });
+});
+
 const RUST_SRC = `use std::collections::HashMap;
 use crate::util::{helper, other as alias};
 mod submod;

@@ -243,11 +243,12 @@ describe('unreal project end-to-end', () => {
     expect(store.assetsReferencing(['DisabledThing'])).toHaveLength(0);
   });
 
-  it('search_reflection finds UPROPERTY/UFUNCTION specifiers in headers', async () => {
+  it('search_reflection finds UPROPERTY/UFUNCTION specifiers with symbol ids', async () => {
     const callable = await callText('search_reflection', { specifier: 'BlueprintCallable' });
-    expect(callable).toContain('Source/Game/MyActor.h:18');
+    expect(callable).toContain('Source/Game/MyActor.h:19');
     expect(callable).toContain('UFUNCTION(BlueprintCallable, Category = "Combat")');
     expect(callable).toContain('void Fire();');
+    expect(callable).toMatch(/#\d+/); // answers carry symbol ids now
 
     const replicated = await callText('search_reflection', { specifier: 'Replicated' });
     expect(replicated).toContain('UPROPERTY(Replicated)');
@@ -256,5 +257,18 @@ describe('unreal project end-to-end', () => {
     const allProps = await callText('search_reflection', { specifier: 'UPROPERTY' });
     expect(allProps).toContain('Health');
     expect(allProps).toContain('Ammo');
+
+    const classes = await callText('search_reflection', { specifier: 'UCLASS' });
+    expect(classes).toContain('UCLASS(Blueprintable)');
+    expect(classes).toContain('class AMyActor : public AActor');
+  });
+
+  it('UCLASS classes are real symbols: outline and type hierarchy see them', async () => {
+    const outline = await callText('get_file_outline', { path: 'Source/Game/MyActor.h' });
+    expect(outline).toContain('class AMyActor : public AActor');
+    expect(outline).toMatch(/\n {2}\d+: .*Fire/); // method nested under the class
+
+    const info = await callText('get_symbol_info', { name: 'AMyActor' });
+    expect(info).toContain('UCLASS(Blueprintable)');
   });
 });

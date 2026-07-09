@@ -100,8 +100,10 @@ of background time, once; after that only edited symbols re-embed. `"embeddings"
 script attachments, signal connections, autoloads; `res://` resolved per `project.godot`, monorepos
 of many projects included), Unity `.unity`/`.prefab`/`.asset` + `.meta` GUID maps (MonoBehaviour →
 C# class links, serialized references), and Unreal `.uproject`/`.uplugin`/`Build.cs` module graphs
-plus reflection-macro search over headers. Binary formats (`.uasset`, Blueprints, `.scn`) are out
-of scope by design.
+plus indexed reflection macros: `UCLASS`/`USTRUCT`/`UFUNCTION`/`UPROPERTY` specifiers attach to the
+symbol they annotate (searchable, shown in `get_symbol_info`), and dllexport macros
+(`class MYGAME_API AMyActor`) no longer break C++ class extraction. Binary formats (`.uasset`,
+Blueprints, `.scn`) are out of scope by design.
 
 ## Roadmap
 
