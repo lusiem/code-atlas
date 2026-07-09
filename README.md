@@ -1,10 +1,10 @@
 # code-atlas
 
-**Multi-language code intelligence MCP server** — gives Claude Code (and any MCP client) a structured view of your codebase instead of raw text: symbol search, file outlines, AST pattern queries, cross-file references, call/type hierarchies, import graphs, precise LSP-backed answers, and local-embedding semantic search — with game-engine asset understanding coming next.
+**Multi-language code intelligence MCP server** — gives Claude Code (and any MCP client) a structured view of your codebase instead of raw text: symbol search, file outlines, AST pattern queries, cross-file references, call/type hierarchies, import graphs, Mermaid diagrams, precise LSP-backed answers, local-embedding semantic search, and game-engine asset understanding (Godot, Unity, Unreal).
 
 Instead of grepping and reading whole files, the model asks questions like *"outline this file"*, *"who calls `parseConfig`?"*, *"how does the request handler reach the DB layer?"* — and gets compact, token-efficient answers backed by a persistent tree-sitter index.
 
-> **Status: early development.** Structural indexing, cross-file resolution, and the call graph work across 11 languages. See the roadmap below.
+> **Status: pre-release.** All roadmap phases below are complete — 12 languages, LSP-exact answers with a structural floor, and engine adapters. npm publish is next.
 
 ## How it works
 
