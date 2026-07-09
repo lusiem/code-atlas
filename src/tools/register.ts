@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { relative, sep } from 'node:path';
 import type { AppContext } from '../context.js';
-import { supportedLanguages } from '../parsing/registry.js';
+import { extractorFor, supportedLanguages } from '../parsing/registry.js';
 import { compileQuery, parse } from '../parsing/loader.js';
 import { semanticSearch } from '../embeddings/search.js';
 import { lspHoverFor } from '../lsp/overlay.js';
@@ -312,7 +312,8 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
         'Run a raw tree-sitter S-expression query over indexed files of one language and return every capture ' +
         'as path:line with the captured text. Powerful for structural searches no regex can express, e.g. ' +
         '`(call_expression function: (identifier) @fn (#eq? @fn "eval"))` or `(for_statement (await_expression) @hit)`. ' +
-        'Parses files on demand — use path_prefix to narrow scope on big repos.',
+        'Parses files on demand, normalized the same way the indexer parses them (e.g. C++ dllexport macros ' +
+        'blanked so class nodes parse) — use path_prefix to narrow scope on big repos.',
       inputSchema: {
         pattern: z.string().describe('tree-sitter query source'),
         lang: z.enum(LANG_VALUES),
@@ -332,6 +333,7 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
         .listFiles()
         .filter((f) => f.lang === lang && (!prefix || f.path.startsWith(prefix)));
 
+      const preprocess = extractorFor(lang)?.preprocess;
       const results: string[] = [];
       let scanned = 0;
       for (const file of files) {
@@ -343,6 +345,9 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
         } catch {
           continue;
         }
+        // same offset-preserving cleanup the indexer applies, so structural
+        // queries see the same tree the index was built from
+        if (preprocess) source = preprocess(source);
         const tree = await parse(lang, source);
         try {
           const query = await compileQuery(lang, args.pattern);

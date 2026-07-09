@@ -263,6 +263,15 @@ describe('unreal project end-to-end', () => {
     expect(classes).toContain('class AMyActor : public AActor');
   });
 
+  it('ast_query sees the same tree the index was built from', async () => {
+    // without the indexer's preprocess, MYGAME_API makes this class node unparseable
+    const out = await callText('ast_query', {
+      pattern: '(class_specifier name: (type_identifier) @cls)',
+      lang: 'cpp',
+    });
+    expect(out).toContain('Source/Game/MyActor.h:8 @cls  AMyActor');
+  });
+
   it('UCLASS classes are real symbols: outline and type hierarchy see them', async () => {
     const outline = await callText('get_file_outline', { path: 'Source/Game/MyActor.h' });
     expect(outline).toContain('class AMyActor : public AActor');
