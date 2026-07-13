@@ -11,7 +11,20 @@ export type LanguageId =
   | 'java'
   | 'kotlin'
   | 'c_sharp'
-  | 'gdscript';
+  | 'gdscript'
+  | 'php'
+  | 'ruby'
+  | 'lua'
+  | 'solidity'
+  | 'zig'
+  | 'nix'
+  | 'swift'
+  | 'scala'
+  | 'dart'
+  | 'terraform'
+  | 'pascal'
+  | 'vue'
+  | 'svelte';
 
 export type SymbolKind =
   | 'function'
@@ -90,6 +103,45 @@ export interface FileExtraction {
   symbols: ExtractedSymbol[];
   imports: ExtractedImport[];
   occurrences: ExtractedOccurrence[];
+}
+
+/** Web frameworks with route extraction. Open set — stored as TEXT. */
+export type FrameworkId = 'express' | 'fastify' | 'nestjs' | 'fastapi' | 'flask' | 'django';
+
+export interface ExtractedRoute {
+  framework: FrameworkId;
+  /** HTTP verb uppercased, or USE (mounts/middleware), ANY, WS. */
+  method: string;
+  /** Path as written in source, including :params / <converters> / {params}. */
+  path: string;
+  /** Router/controller prefix joined when derivable in-file, else null. */
+  fullPath: string | null;
+  /** 1-based line of the route declaration. */
+  startLine: number;
+  /**
+   * Line of the handler definition when the handler is positional (a decorated
+   * function/method) — resolved to a symbol id at insert time. Null for
+   * anonymous/inline or by-name handlers.
+   */
+  handlerLine: number | null;
+  /** Raw handler name when known but not positional (Express fn refs, Django dotted). */
+  handlerName: string | null;
+  /** JSON: middleware, blueprint/router variable, mounts — framework-specific. */
+  detail: string | null;
+}
+
+/** A route row as returned from the database. */
+export interface RouteRow {
+  id: number;
+  framework: FrameworkId;
+  method: string;
+  path: string;
+  fullPath: string | null;
+  filePath: string;
+  startLine: number;
+  handlerSymbolId: number | null;
+  handlerName: string | null;
+  detail: string | null;
 }
 
 /** A symbol row as stored/returned from the database. */

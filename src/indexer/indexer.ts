@@ -11,6 +11,9 @@ import { buildChunks } from '../embeddings/chunker.js';
 import { assetForPath, type AssetInfo } from '../engines/detect.js';
 import { extractAssetRefs } from '../engines/registry.js';
 import { affectedFilesFor, resolveWorkspace, type ResolveStats } from '../graph/resolver.js';
+import { isTestPath } from '../analysis/testish.js';
+import { frameworkForFile } from '../frameworks/detect.js';
+import { extractRoutes } from '../frameworks/registry.js';
 import { scanWorkspace } from './scanner.js';
 
 export interface IndexProgress {
@@ -271,10 +274,13 @@ export class Indexer {
     }
     const extraction = await extractFile(extractor, source);
     const chunks = this.config.embeddings.enabled ? buildChunks(extraction, source, relPath) : [];
+    const framework = frameworkForFile(lang, relPath, extraction.imports);
+    const routes = framework ? await extractRoutes(framework, lang, source) : [];
     const fileId = this.store.replaceFile(
-      { path: relPath, lang, hash, size, mtimeMs },
+      { path: relPath, lang, hash, size, mtimeMs, isTest: isTestPath(relPath, lang) },
       extraction,
       chunks,
+      routes,
     );
     batch.changedFileIds.push(fileId);
     this.progress.changedFiles++;

@@ -44,8 +44,10 @@ describe('MCP server end-to-end', () => {
     expect(names).toEqual([
       'ast_query',
       'call_hierarchy',
+      'change_impact',
       'find_asset_references',
       'find_references',
+      'find_route',
       'generate_diagram',
       'get_dependencies',
       'get_file_outline',
@@ -53,6 +55,7 @@ describe('MCP server end-to-end', () => {
       'get_symbol_info',
       'go_to_definition',
       'index_status',
+      'list_routes',
       'project_overview',
       'reindex',
       'search_reflection',

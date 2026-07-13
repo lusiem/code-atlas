@@ -8,6 +8,17 @@ import { goExtractor } from '../src/parsing/langs/go.js';
 import { javaExtractor } from '../src/parsing/langs/java.js';
 import { csharpExtractor } from '../src/parsing/langs/csharp.js';
 import { gdscriptExtractor } from '../src/parsing/langs/gdscript.js';
+import { phpExtractor } from '../src/parsing/langs/php.js';
+import { rubyExtractor } from '../src/parsing/langs/ruby.js';
+import { luaExtractor } from '../src/parsing/langs/lua.js';
+import { solidityExtractor } from '../src/parsing/langs/solidity.js';
+import { zigExtractor } from '../src/parsing/langs/zig.js';
+import { nixExtractor } from '../src/parsing/langs/nix.js';
+import { swiftExtractor } from '../src/parsing/langs/swift.js';
+import { scalaExtractor } from '../src/parsing/langs/scala.js';
+import { dartExtractor } from '../src/parsing/langs/dart.js';
+import { terraformExtractor } from '../src/parsing/langs/terraform.js';
+import { pascalExtractor } from '../src/parsing/langs/pascal.js';
 import type { ExtractedSymbol, FileExtraction } from '../src/types.js';
 
 function index(result: FileExtraction): Map<string, ExtractedSymbol> {
@@ -720,3 +731,788 @@ describe('gdscript extractor', () => {
     expect(writes).toContain('speed');
   });
 });
+
+// ---------------------------------------------------------------- php
+
+const PHP_SRC = `<?php
+namespace App\\Services;
+
+use App\\Models\\User as UserModel;
+use App\\Contracts\\Cache;
+
+/** Manages users. */
+class UserService extends BaseService implements Cache, Countable
+{
+    const MAX = 10;
+    private string $name;
+
+    public function __construct(private UserModel $model) {}
+
+    /** Finds one user. */
+    public function find(int $id): ?UserModel
+    {
+        return $this->model->query($id);
+    }
+
+    private function internal() {}
+}
+
+interface Repo {}
+trait Loggable { public function log() {} }
+enum Status: string { case Active = 'a'; case Banned = 'b'; }
+
+function helper($x) { return sprintf('%s', $x); }
+`;
+
+describe('php extractor', () => {
+  const resultP = extractFile(phpExtractor, PHP_SRC);
+
+  it('extracts classes, interfaces, traits, enums, functions with docs', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('UserService')!.kind).toBe('class');
+    expect(byName.get('UserService')!.docComment).toBe('Manages users.');
+    expect(byName.get('Repo')!.kind).toBe('interface');
+    expect(byName.get('Loggable')!.kind).toBe('trait');
+    expect(byName.get('Status')!.kind).toBe('enum');
+    expect(byName.get('Active')!.kind).toBe('enum_member');
+    expect(byName.get('helper')!.kind).toBe('function');
+    expect(byName.get('MAX')!.kind).toBe('constant');
+    expect(byName.get('name')!.kind).toBe('property');
+  });
+
+  it('classifies constructors and visibility', async () => {
+    const result = await resultP;
+    const ctor = result.symbols.find((s) => s.kind === 'constructor')!;
+    expect(ctor.name).toBe('__construct');
+    expect(parentOf(result, ctor)).toBe('UserService');
+    const find = result.symbols.find((s) => s.name === 'find')!;
+    expect(find.kind).toBe('method');
+    expect(find.isExported).toBe(true);
+    expect(find.docComment).toBe('Finds one user.');
+    expect(result.symbols.find((s) => s.name === 'internal')!.isExported).toBe(false);
+  });
+
+  it('records bases and use imports', async () => {
+    const result = await resultP;
+    const svc = index(result).get('UserService')!;
+    expect(svc.bases).toEqual([
+      { name: 'BaseService', kind: 'extends' },
+      { name: 'Cache', kind: 'implements' },
+      { name: 'Countable', kind: 'implements' },
+    ]);
+    expect(result.imports).toEqual([
+      { specifier: 'App\\Models\\User', names: ['UserModel'], startLine: 4 },
+      { specifier: 'App\\Contracts\\Cache', names: ['Cache'], startLine: 5 },
+    ]);
+  });
+
+  it('captures call occurrences', async () => {
+    const result = await resultP;
+    const calls = result.occurrences.filter((o) => o.role === 'call').map((o) => o.name);
+    expect(calls).toContain('query');
+    expect(calls).toContain('sprintf');
+  });
+});
+
+// ---------------------------------------------------------------- ruby
+
+const RUBY_SRC = `require 'json'
+require_relative './util'
+
+# Manages users.
+class UserService < BaseService
+  include Comparable
+
+  MAX = 10
+
+  def initialize(model)
+    @model = model
+  end
+
+  # Finds one user.
+  def find(id)
+    @model.query(id)
+  end
+
+  def self.build
+    new(nil)
+  end
+end
+
+module Helpers
+  def helper(x)
+    x
+  end
+end
+
+def top_level(y)
+  y
+end
+`;
+
+describe('ruby extractor', () => {
+  const resultP = extractFile(rubyExtractor, RUBY_SRC);
+
+  it('extracts classes, modules, methods, constants with docs', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('UserService')!.kind).toBe('class');
+    expect(byName.get('UserService')!.docComment).toBe('Manages users.');
+    expect(byName.get('Helpers')!.kind).toBe('module');
+    expect(byName.get('MAX')!.kind).toBe('constant');
+    const find = byName.get('find')!;
+    expect(find.kind).toBe('method');
+    expect(find.docComment).toBe('Finds one user.');
+    expect(parentOf(result, find)).toBe('UserService');
+    expect(byName.get('build')!.kind).toBe('method');
+  });
+
+  it('reclassifies initialize and top-level defs', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('initialize')!.kind).toBe('constructor');
+    expect(byName.get('top_level')!.kind).toBe('function');
+    expect(byName.get('helper')!.kind).toBe('method'); // module method
+  });
+
+  it('records superclass and mixins as bases', async () => {
+    const result = await resultP;
+    const svc = index(result).get('UserService')!;
+    expect(svc.bases).toEqual([
+      { name: 'BaseService', kind: 'extends' },
+      { name: 'Comparable', kind: 'implements' },
+    ]);
+  });
+
+  it('extracts require / require_relative imports', async () => {
+    const result = await resultP;
+    expect(result.imports).toEqual([
+      { specifier: 'json', names: [], startLine: 1 },
+      { specifier: './util', names: [], startLine: 2 },
+    ]);
+  });
+
+  it('captures call occurrences', async () => {
+    const result = await resultP;
+    const calls = result.occurrences.filter((o) => o.role === 'call').map((o) => o.name);
+    expect(calls).toContain('query');
+  });
+});
+
+// ---------------------------------------------------------------- lua
+
+const LUA_SRC = `local util = require("app.util")
+
+--- Adds numbers.
+local function add(a, b)
+  return a + b
+end
+
+local M = {}
+
+function M.helper(x)
+  return util.trim(x)
+end
+
+function M:method(y)
+  return self.value + y
+end
+
+local MAX = 10
+GLOBAL_VAR = 5
+`;
+
+describe('lua extractor', () => {
+  const resultP = extractFile(luaExtractor, LUA_SRC);
+
+  it('extracts functions, table functions, methods, variables', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('add')!.kind).toBe('function');
+    expect(byName.get('add')!.docComment).toBe('Adds numbers.');
+    expect(byName.get('add')!.isExported).toBe(false); // local
+    expect(byName.get('helper')!.kind).toBe('function');
+    expect(byName.get('helper')!.signature).toContain('M.helper');
+    expect(byName.get('method')!.kind).toBe('method');
+    expect(byName.get('MAX')!.kind).toBe('variable');
+    expect(byName.get('GLOBAL_VAR')!.isExported).toBe(true);
+  });
+
+  it('extracts require imports and call occurrences', async () => {
+    const result = await resultP;
+    expect(result.imports).toEqual([
+      { specifier: 'app.util', names: [], startLine: 1 },
+    ]);
+    const calls = result.occurrences.filter((o) => o.role === 'call').map((o) => o.name);
+    expect(calls).toContain('trim');
+  });
+});
+
+// ---------------------------------------------------------------- solidity
+
+const SOLIDITY_SRC = `pragma solidity ^0.8.0;
+import "./Base.sol";
+import {IERC20} from "@openzeppelin/token/IERC20.sol";
+
+/// A token vault.
+contract Vault is Base, IERC20 {
+    uint256 public totalShares;
+    address private owner;
+
+    event Deposited(address indexed who, uint256 amount);
+    error NotOwner();
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert NotOwner();
+        _;
+    }
+
+    /// Deposit funds.
+    function deposit(uint256 amount) external returns (uint256) {
+        emit Deposited(msg.sender, amount);
+        return _mint(amount);
+    }
+
+    function _mint(uint256 amount) internal returns (uint256) {
+        totalShares += amount;
+        return amount;
+    }
+}
+
+interface IVault { function deposit(uint256) external; }
+library MathLib { function min(uint a, uint b) internal pure returns (uint) { return a; } }
+enum Side { Long, Short }
+`;
+
+describe('solidity extractor', () => {
+  const resultP = extractFile(solidityExtractor, SOLIDITY_SRC);
+
+  it('extracts contracts, interfaces, libraries, events, state vars', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('Vault')!.kind).toBe('class');
+    expect(byName.get('Vault')!.docComment).toBe('A token vault.');
+    expect(byName.get('IVault')!.kind).toBe('interface');
+    expect(byName.get('MathLib')!.kind).toBe('namespace');
+    expect(byName.get('Deposited')!.kind).toBe('signal');
+    expect(byName.get('NotOwner')!.kind).toBe('constant');
+    expect(byName.get('Side')!.kind).toBe('enum');
+    expect(byName.get('Long')!.kind).toBe('enum_member');
+    expect(byName.get('totalShares')!.kind).toBe('field');
+    expect(byName.get('onlyOwner')!.kind).toBe('method'); // modifier in contract
+  });
+
+  it('tracks visibility and bases', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('owner')!.isExported).toBe(false); // private
+    expect(byName.get('_mint')!.isExported).toBe(false); // internal
+    const deposits = result.symbols.filter((s) => s.name === 'deposit');
+    expect(deposits.some((s) => s.isExported)).toBe(true); // external
+    expect(byName.get('Vault')!.bases).toEqual([
+      { name: 'Base', kind: 'extends' },
+      { name: 'IERC20', kind: 'extends' },
+    ]);
+  });
+
+  it('extracts imports and call occurrences', async () => {
+    const result = await resultP;
+    expect(result.imports).toEqual([
+      { specifier: './Base.sol', names: [], startLine: 2 },
+      { specifier: '@openzeppelin/token/IERC20.sol', names: ['IERC20'], startLine: 3 },
+    ]);
+    const calls = result.occurrences.filter((o) => o.role === 'call').map((o) => o.name);
+    expect(calls).toContain('_mint');
+    expect(calls).toContain('Deposited'); // emit
+  });
+});
+
+// ---------------------------------------------------------------- zig
+
+const ZIG_SRC = `const std = @import("std");
+const util = @import("./util.zig");
+
+/// A point in 2d.
+const Point = struct {
+    x: f32,
+    y: f32,
+
+    pub fn norm(self: Point) f32 {
+        return self.x;
+    }
+};
+
+const Color = enum { red, green };
+const MAX: u32 = 10;
+var counter: u32 = 0;
+
+pub fn add(a: i32, b: i32) i32 {
+    return a + b;
+}
+`;
+
+describe('zig extractor', () => {
+  const resultP = extractFile(zigExtractor, ZIG_SRC);
+
+  it('extracts containers, functions, consts', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('Point')!.kind).toBe('struct');
+    expect(byName.get('Point')!.docComment).toBe('A point in 2d.');
+    expect(byName.get('Color')!.kind).toBe('enum');
+    expect(byName.get('red')!.kind).toBe('enum_member');
+    expect(byName.get('x')!.kind).toBe('field');
+    expect(byName.get('add')!.kind).toBe('function');
+    expect(byName.get('add')!.isExported).toBe(true); // pub
+    expect(byName.get('norm')!.isExported).toBe(true);
+    expect(parentOf(result, byName.get('norm')!)).toBe('Point');
+    expect(byName.get('MAX')!.kind).toBe('constant');
+    expect(byName.get('counter')!.kind).toBe('variable');
+    expect(byName.get('counter')!.isExported).toBe(false);
+  });
+
+  it('extracts @import specifiers', async () => {
+    const result = await resultP;
+    expect(result.imports).toEqual([
+      { specifier: 'std', names: [], startLine: 1 },
+      { specifier: './util.zig', names: [], startLine: 2 },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------- nix
+
+const NIX_SRC = `{ pkgs, lib, ... }:
+
+let
+  version = "1.2.3";
+  mkGreeting = name: "hello " + name;
+  helpers = import ./helpers.nix { inherit pkgs; };
+in
+{
+  package = pkgs.stdenv.mkDerivation {
+    pname = "demo";
+    inherit version;
+  };
+  greeting = mkGreeting "world";
+  other = import ./other;
+}
+`;
+
+describe('nix extractor', () => {
+  const resultP = extractFile(nixExtractor, NIX_SRC);
+
+  it('extracts bindings; function-valued bindings are functions', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('version')!.kind).toBe('variable');
+    expect(byName.get('mkGreeting')!.kind).toBe('function');
+    expect(byName.get('package')!.kind).toBe('variable');
+  });
+
+  it('extracts import paths and application calls', async () => {
+    const result = await resultP;
+    expect(result.imports).toEqual([
+      { specifier: './helpers.nix', names: [], startLine: 6 },
+      { specifier: './other', names: [], startLine: 14 },
+    ]);
+    const calls = result.occurrences.filter((o) => o.role === 'call').map((o) => o.name);
+    expect(calls).toContain('mkGreeting');
+  });
+});
+
+// ---------------------------------------------------------------- swift
+
+const SWIFT_SRC = `import Foundation
+
+/// A user of the system.
+public class UserService: BaseService, Cacheable {
+    let name: String
+    private var count: Int = 0
+
+    /// Finds a user.
+    public func find(id: Int) -> String? {
+        return query(id)
+    }
+}
+
+protocol Cacheable {
+    func cached() -> Bool
+}
+
+struct Point { var x: Double; var y: Double }
+enum Color { case red, green }
+extension UserService {
+    func extra() {}
+}
+typealias Handler = (Int) -> Void
+public func topLevel(x: Int) -> Int { return x }
+`;
+
+describe('swift extractor', () => {
+  const resultP = extractFile(swiftExtractor, SWIFT_SRC);
+
+  it('extracts classes, protocols, structs, enums, extensions', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    const cls = result.symbols.find((s) => s.name === 'UserService' && s.kind === 'class')!;
+    expect(cls).toBeDefined();
+    expect(cls.docComment).toBe('A user of the system.');
+    expect(byName.get('Cacheable')!.kind).toBe('interface');
+    expect(byName.get('cached')!.kind).toBe('method');
+    expect(byName.get('Point')!.kind).toBe('struct');
+    expect(byName.get('Color')!.kind).toBe('enum');
+    expect(byName.get('red')!.kind).toBe('enum_member');
+    expect(byName.get('Handler')!.kind).toBe('type_alias');
+    expect(byName.get('topLevel')!.kind).toBe('function');
+    // the extension is an impl block on UserService
+    const impls = result.symbols.filter((s) => s.kind === 'impl');
+    expect(impls).toHaveLength(1);
+    expect(impls[0]!.name).toBe('UserService');
+    expect(parentOf(result, byName.get('extra')!)).toBe('UserService');
+  });
+
+  it('tracks visibility, methods, properties, bases', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('find')!.kind).toBe('method');
+    expect(byName.get('find')!.docComment).toBe('Finds a user.');
+    expect(byName.get('count')!.isExported).toBe(false); // private
+    expect(byName.get('name')!.kind).toBe('property');
+    const cls = result.symbols.find((s) => s.name === 'UserService' && s.kind === 'class')!;
+    expect(cls.bases).toEqual([
+      { name: 'BaseService', kind: 'extends' },
+      { name: 'Cacheable', kind: 'extends' },
+    ]);
+  });
+
+  it('records module imports and calls', async () => {
+    const result = await resultP;
+    expect(result.imports).toEqual([{ specifier: 'Foundation', names: [], startLine: 1 }]);
+    const calls = result.occurrences.filter((o) => o.role === 'call').map((o) => o.name);
+    expect(calls).toContain('query');
+  });
+});
+
+// ---------------------------------------------------------------- scala
+
+const SCALA_SRC = `package app.services
+
+import scala.collection.mutable.Map
+import app.models.{User, Role => UserRole}
+
+/** Manages users. */
+class UserService(repo: Repo) extends BaseService with Cacheable with Loggable {
+  val max: Int = 10
+  var count = 0
+
+  /** Finds one. */
+  def find(id: Int): Option[User] = repo.query(id)
+}
+
+object UserService {
+  def apply(): UserService = new UserService(null)
+}
+
+trait Cacheable { def cached: Boolean }
+case class Point(x: Double, y: Double)
+enum Color:
+  case Red, Green
+
+type Handler = Int => Unit
+def topLevel(y: Int): Int = y
+`;
+
+describe('scala extractor', () => {
+  const resultP = extractFile(scalaExtractor, SCALA_SRC);
+
+  it('extracts classes, objects, traits, enums (scala 3 syntax)', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    const classes = result.symbols.filter((s) => s.name === 'UserService');
+    expect(classes.some((s) => s.kind === 'class')).toBe(true);
+    expect(classes.some((s) => s.kind === 'module')).toBe(true); // companion object
+    expect(byName.get('Cacheable')!.kind).toBe('trait');
+    expect(byName.get('Point')!.kind).toBe('class'); // case class
+    expect(byName.get('Color')!.kind).toBe('enum');
+    expect(byName.get('Red')!.kind).toBe('enum_member');
+    expect(byName.get('Handler')!.kind).toBe('type_alias');
+    expect(byName.get('topLevel')!.kind).toBe('function');
+  });
+
+  it('classifies members and bases', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('find')!.kind).toBe('method');
+    expect(byName.get('find')!.docComment).toBe('Finds one.');
+    expect(byName.get('max')!.kind).toBe('constant'); // val
+    expect(byName.get('count')!.kind).toBe('variable'); // var
+    expect(byName.get('apply')!.kind).toBe('method'); // in object
+    const svc = result.symbols.find((s) => s.name === 'UserService' && s.kind === 'class')!;
+    expect(svc.bases).toEqual([
+      { name: 'BaseService', kind: 'extends' },
+      { name: 'Cacheable', kind: 'implements' },
+      { name: 'Loggable', kind: 'implements' },
+    ]);
+  });
+
+  it('extracts imports with selectors and renames', async () => {
+    const result = await resultP;
+    expect(result.imports).toEqual([
+      { specifier: 'scala.collection.mutable.Map', names: ['Map'], startLine: 3 },
+      { specifier: 'app.models', names: ['User', 'UserRole'], startLine: 4 },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------- dart
+
+const DART_SRC = `import 'package:app/models/user.dart';
+import './util.dart';
+
+/// Manages users.
+class UserService extends BaseService with Loggable implements Cacheable {
+  final String name;
+  int _count = 0;
+
+  UserService(this.name);
+
+  /// Finds one user.
+  Future<User?> find(int id) async {
+    return query(id);
+  }
+
+  int get count => _count;
+}
+
+mixin Loggable {
+  void log(String m) {}
+}
+
+enum Color { red, green }
+extension UserX on UserService {
+  void extra() {}
+}
+typedef Handler = void Function(int);
+int topLevel(int x) => x;
+const maxUsers = 10;
+`;
+
+describe('dart extractor', () => {
+  const resultP = extractFile(dartExtractor, DART_SRC);
+
+  it('extracts classes, mixins, enums, extensions, typedefs', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    const cls = result.symbols.find((s) => s.name === 'UserService' && s.kind === 'class')!;
+    expect(cls).toBeDefined();
+    expect(cls.docComment).toBe('Manages users.');
+    expect(byName.get('Loggable')!.kind).toBe('trait');
+    expect(byName.get('Color')!.kind).toBe('enum');
+    expect(byName.get('red')!.kind).toBe('enum_member');
+    expect(byName.get('UserX')!.kind).toBe('impl');
+    expect(byName.get('Handler')!.kind).toBe('type_alias');
+    expect(byName.get('topLevel')!.kind).toBe('function');
+    expect(byName.get('maxUsers')!.kind).toBe('constant');
+  });
+
+  it('classifies members, constructors, privacy, bases', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('find')!.kind).toBe('method');
+    expect(byName.get('find')!.docComment).toBe('Finds one user.');
+    const ctor = result.symbols.find((s) => s.kind === 'constructor');
+    expect(ctor?.name).toBe('UserService');
+    expect(byName.get('_count')!.isExported).toBe(false); // underscore = private
+    expect(byName.get('name')!.kind).toBe('field');
+    expect(byName.get('count')!.kind).toBe('property'); // getter
+    const cls = result.symbols.find((s) => s.name === 'UserService' && s.kind === 'class')!;
+    expect(cls.bases).toEqual([
+      { name: 'BaseService', kind: 'extends' },
+      { name: 'Loggable', kind: 'implements' },
+      { name: 'Cacheable', kind: 'implements' },
+    ]);
+  });
+
+  it('extracts uri imports and calls', async () => {
+    const result = await resultP;
+    expect(result.imports).toEqual([
+      { specifier: 'package:app/models/user.dart', names: [], startLine: 1 },
+      { specifier: './util.dart', names: [], startLine: 2 },
+    ]);
+    const calls = result.occurrences.filter((o) => o.role === 'call').map((o) => o.name);
+    expect(calls).toContain('query');
+  });
+});
+
+
+// ---------------------------------------------------------------- terraform
+
+const TF_SRC = `resource "aws_s3_bucket" "logs" {
+  bucket = var.bucket_name
+  tags   = local.common_tags
+}
+
+data "aws_ami" "ubuntu" {
+  most_recent = true
+}
+
+module "network" {
+  source = "./modules/net"
+  cidr   = var.cidr
+}
+
+variable "bucket_name" {
+  type    = string
+  default = "logs"
+}
+
+output "bucket_arn" {
+  value = aws_s3_bucket.logs.arn
+}
+
+locals {
+  common_tags = { env = "prod" }
+  region      = "us-east-1"
+}
+
+provider "aws" {
+  region = local.region
+}
+`;
+
+describe('terraform extractor', () => {
+  const resultP = extractFile(terraformExtractor, TF_SRC);
+
+  it('maps blocks to symbols: resource/data/module/variable/output/locals/provider', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    const logs = byName.get('logs')!;
+    expect(logs.kind).toBe('struct');
+    expect(logs.signature).toContain('aws_s3_bucket'); // type searchable via signature
+    expect(byName.get('ubuntu')!.kind).toBe('struct'); // data block
+    expect(byName.get('network')!.kind).toBe('module');
+    expect(byName.get('bucket_name')!.kind).toBe('variable');
+    expect(byName.get('bucket_arn')!.kind).toBe('constant'); // output
+    expect(byName.get('common_tags')!.kind).toBe('variable'); // locals entry
+    expect(byName.get('region')!.kind).toBe('variable');
+    expect(byName.get('aws')!.kind).toBe('namespace'); // provider
+  });
+
+  it('module source resolves as an import; var/local refs are occurrences', async () => {
+    const result = await resultP;
+    expect(result.imports).toEqual([
+      { specifier: './modules/net', names: [], startLine: 11 },
+    ]);
+    const refs = result.occurrences.map((o) => o.name);
+    expect(refs).toContain('bucket_name'); // var.bucket_name
+    expect(refs).toContain('common_tags'); // local.common_tags
+    expect(refs).toContain('logs'); // aws_s3_bucket.logs
+  });
+});
+
+// ---------------------------------------------------------------- pascal
+
+const PASCAL_SRC = `unit UserService;
+
+interface
+
+uses SysUtils, App.Models;
+
+type
+  { Manages users. }
+  TUserService = class(TBaseService, ICache)
+  private
+    FName: string;
+  public
+    constructor Create(AName: string);
+    function Find(Id: Integer): string;
+    property Name: string read FName;
+  end;
+
+  TPoint = record
+    X, Y: Double;
+  end;
+
+  TColor = (Red, Green);
+  THandler = procedure(X: Integer);
+
+const
+  MAX_USERS = 10;
+
+var
+  GCounter: Integer;
+
+function TopLevel(Y: Integer): Integer;
+
+implementation
+
+constructor TUserService.Create(AName: string);
+begin
+  FName := AName;
+end;
+
+function TUserService.Find(Id: Integer): string;
+begin
+  Result := Query(Id);
+end;
+
+function TopLevel(Y: Integer): Integer;
+begin
+  Result := Y;
+end;
+
+end.
+`;
+
+describe('pascal extractor', () => {
+  const resultP = extractFile(pascalExtractor, PASCAL_SRC);
+
+  it('extracts units, classes, records, enums, procs with docs', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    expect(byName.get('UserService')!.kind).toBe('module');
+    const cls = result.symbols.find((s) => s.name === 'TUserService' && s.kind === 'class')!;
+    expect(cls).toBeDefined();
+    expect(cls.docComment).toBe('Manages users.');
+    expect(byName.get('TPoint')!.kind).toBe('struct');
+    expect(byName.get('TColor')!.kind).toBe('enum');
+    expect(byName.get('Red')!.kind).toBe('enum_member');
+    expect(byName.get('THandler')!.kind).toBe('type_alias');
+    expect(byName.get('MAX_USERS')!.kind).toBe('constant');
+    expect(byName.get('GCounter')!.kind).toBe('variable');
+    // record fields: both names of `X, Y: Double`
+    expect(byName.get('X')!.kind).toBe('field');
+    expect(byName.get('Y')!.kind).toBe('field');
+  });
+
+  it('classifies constructors, qualified impl names, visibility', async () => {
+    const result = await resultP;
+    const byName = index(result);
+    const ctors = result.symbols.filter((s) => s.kind === 'constructor');
+    expect(ctors.length).toBeGreaterThanOrEqual(1);
+    expect(ctors.every((s) => s.name === 'Create')).toBe(true);
+    // implementation-section `function TUserService.Find` binds the last identifier
+    const finds = result.symbols.filter((s) => s.name === 'Find');
+    expect(finds.some((s) => s.kind === 'method')).toBe(true);
+    expect(byName.get('FName')!.isExported).toBe(false); // private section
+    expect(byName.get('Name')!.kind).toBe('property');
+    const cls = result.symbols.find((s) => s.name === 'TUserService' && s.kind === 'class')!;
+    expect(cls.bases).toEqual([
+      { name: 'TBaseService', kind: 'extends' },
+      { name: 'ICache', kind: 'implements' },
+    ]);
+  });
+
+  it('extracts uses clauses and calls', async () => {
+    const result = await resultP;
+    expect(result.imports).toEqual([
+      { specifier: 'SysUtils', names: [], startLine: 5 },
+      { specifier: 'App.Models', names: [], startLine: 5 },
+    ]);
+    const calls = result.occurrences.filter((o) => o.role === 'call').map((o) => o.name);
+    expect(calls).toContain('Query');
+  });
+});
+

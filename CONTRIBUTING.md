@@ -42,6 +42,12 @@ win/mac/linux; no toolchain required.
    references — check a real repo before skipping this).
 5. Golden tests in `test/extractor-langs.test.ts`; then index a real repo and eyeball
    `find_references` on a hot symbol.
+6. Test-path conventions in `src/analysis/testish.ts` (powers `change_impact`'s
+   affected-test reporting) — an empty matcher list is fine for languages without a
+   path convention (the generic `test/`/`tests/` directory rule still applies).
+
+`LANG_VALUES` for tool schemas derives from `src/languages.ts` automatically — no
+manual enum to update.
 
 ## Adding a language server
 

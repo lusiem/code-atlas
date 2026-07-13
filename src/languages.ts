@@ -18,6 +18,19 @@ export const LANGUAGES: LanguageInfo[] = [
   { id: 'kotlin', extensions: ['.kt', '.kts'] },
   { id: 'c_sharp', extensions: ['.cs'] },
   { id: 'gdscript', extensions: ['.gd'] },
+  { id: 'php', extensions: ['.php'] },
+  { id: 'ruby', extensions: ['.rb', '.rake', '.gemspec'] },
+  { id: 'lua', extensions: ['.lua'] },
+  { id: 'solidity', extensions: ['.sol'] },
+  { id: 'zig', extensions: ['.zig'] },
+  { id: 'nix', extensions: ['.nix'] },
+  { id: 'swift', extensions: ['.swift'] },
+  { id: 'scala', extensions: ['.scala', '.sc'] },
+  { id: 'dart', extensions: ['.dart'] },
+  { id: 'terraform', extensions: ['.tf', '.tfvars', '.hcl'] },
+  { id: 'pascal', extensions: ['.pas', '.pp', '.dpr', '.lpr'] },
+  { id: 'vue', extensions: ['.vue'] },
+  { id: 'svelte', extensions: ['.svelte'] },
 ];
 
 const byExtension = new Map<string, LanguageInfo>();

@@ -1,6 +1,6 @@
 # code-atlas
 
-**Multi-language code intelligence MCP server** — gives Claude Code (and any MCP client) a structured view of your codebase instead of raw text: symbol search, file outlines, AST pattern queries, cross-file references, call/type hierarchies, import graphs, Mermaid diagrams, precise LSP-backed answers, local-embedding semantic search, and game-engine asset understanding (Godot, Unity, Unreal).
+**Multi-language code intelligence MCP server** — gives Claude Code (and any MCP client) a structured view of your codebase instead of raw text: symbol search, file outlines, AST pattern queries, cross-file references, call/type hierarchies, import graphs, change-impact analysis with affected-test detection, web-framework route maps (Express/NestJS/Fastify/FastAPI/Flask/Django), Mermaid diagrams, precise LSP-backed answers, local-embedding semantic search, and game-engine asset understanding (Godot, Unity, Unreal). 25 languages indexed.
 
 Instead of grepping and reading whole files, the model asks questions like *"outline this file"*, *"who calls `parseConfig`?"*, *"how does the request handler reach the DB layer?"* — and gets compact, token-efficient answers backed by a persistent tree-sitter index.
 
@@ -62,6 +62,9 @@ Full reference with example outputs: [docs/tools.md](docs/tools.md).
 | `type_hierarchy` | Supertypes and subtypes over extends/implements edges. |
 | `get_dependencies` | File import graph, both directions (imports / imported-by). |
 | `trace_path` | Shortest call chain between two symbols. |
+| `change_impact` | Blast radius of a change: transitive callers + import reachability, affected **test files** first. Target a symbol, a file list, or nothing — no args analyzes the uncommitted git diff (hunk-level: only symbols you actually touched seed the traversal). Affected route handlers are tagged `[ROUTE GET /users/:id]`. |
+| `list_routes` | Web-framework routes across the workspace — Express, Fastify, NestJS, FastAPI, Flask, Django — each linked to its handler symbol. |
+| `find_route` | *"Which code serves `GET /api/users/7`?"* — matches a concrete URL against indexed route patterns (`:id`, `{id}`, `<int:pk>` are wildcards) and returns the handler. |
 | `generate_diagram` | Mermaid diagrams of the above graphs: import graph (file or directory level), call graph around a symbol, type hierarchy, call path — paste straight into GitHub markdown or docs. |
 | `get_scene_structure` | Godot scene node tree with attached scripts, instanced sub-scenes, and signal connections (handlers resolved to symbols). |
 | `find_asset_references` | Which scenes/prefabs use this script? Reverse lookup across Godot res:// paths, Unity GUIDs (via .meta), and Unreal modules. |
@@ -94,7 +97,21 @@ of background time, once; after that only edited symbols re-embed. `"embeddings"
 
 ## Languages
 
-**Indexing today:** TypeScript, TSX, JavaScript, Python, C, C++, Rust, Go, Java, Kotlin, C#, GDScript.
+**Indexing today (25):** TypeScript, TSX, JavaScript, Python, C, C++, Rust, Go, Java, Kotlin, C#,
+GDScript, PHP, Ruby, Lua, Solidity, Zig, Nix, Swift, Scala, Dart, Terraform/HCL, Pascal/Delphi,
+Vue, Svelte.
+
+Vue and Svelte single-file components index the `<script>` blocks (all of them, `<script setup>`
+included) at their true file line numbers; component imports resolve, so `.vue`/`.svelte`
+dependency graphs work in `get_dependencies` and `change_impact`. Terraform maps blocks to
+symbols (`resource "aws_s3_bucket" "logs"` is searchable by either label) and resolves local
+`module` sources as imports. Languages beyond the LSP-covered core answer structurally with
+confidence-scored edges — same contract as everywhere else.
+
+**Test-file awareness:** every indexed file is classified by per-language path conventions
+(`*.test.ts`, `test_*.py`, `*_test.go`, `src/test/`, `*_spec.rb`, foundry `.t.sol`, …) — this
+powers `change_impact`'s affected-test reporting. Inline test blocks (Rust `#[cfg(test)]`, Zig
+`test`) are not path-classifiable and stay invisible by design.
 
 **Game engines:** engine assets index alongside code — Godot `.tscn`/`.tres` scenes (node trees,
 script attachments, signal connections, autoloads; `res://` resolved per `project.godot`, monorepos
@@ -114,9 +131,10 @@ Blueprints, `.scn`) are out of scope by design.
 5. ~~Local-embedding semantic search (`semantic_search`, hybrid BM25+vector reciprocal-rank fusion, lazy model download, incremental re-embedding)~~ ✅
 6. ~~Game-engine adapters: GDScript grammar (vendored wasm build), Godot scenes/autoloads, Unity prefabs/GUIDs, Unreal module graph + reflection search, Godot editor LSP attach (TCP 6005, nightly-tested against a real editor)~~ ✅
 7. ~~Docs, benchmarks in CI (cold index 157k LOC ≈ 5 s, warm queries p95 < 10 ms), cross-platform CI, npm pack smoke~~ ✅ — npm publish + MCP registry submission pending
+8. ~~Competitive push: `change_impact` (blast radius + affected tests, git-diff mode), web-framework route indexing (`list_routes`/`find_route`), 13 more languages incl. Vue/Svelte SFCs~~ ✅
 
-Performance (vuejs/core, 157k LOC, 525 files): cold index **4.7 s**, warm tool calls
-**p95 ≤ 6 ms** through a full MCP round-trip. `scripts/bench.mjs` runs in CI.
+Performance (vuejs/core, 157k LOC, 536 files incl. `.vue` SFCs): cold index **3.8 s**, warm tool
+calls **p95 ≤ 6 ms** through a full MCP round-trip. `scripts/bench.mjs` runs in CI.
 
 ## Development
 

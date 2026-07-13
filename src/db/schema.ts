@@ -6,7 +6,7 @@ import { PACKAGE_VERSION } from '../version.js';
  * stepwise MIGRATIONS below and falls back to a drop-and-rebuild (the index
  * is a cache — a rebuild only costs one full sweep).
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** DDL for the embedding chunk tables (v3), shared by createAll and MIGRATIONS[2]. */
 const CHUNKS_DDL = `
@@ -49,6 +49,24 @@ const ASSETS_DDL = `
     CREATE INDEX idx_asset_refs_target ON asset_refs(target);
 `;
 
+/** DDL for the web-framework route table (v5), shared by createAll. */
+const ROUTES_DDL = `
+    CREATE TABLE routes (
+      id                INTEGER PRIMARY KEY,
+      file_id           INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+      framework         TEXT NOT NULL,    -- express|nestjs|fastify|fastapi|flask|django (open set)
+      method            TEXT NOT NULL,    -- GET|POST|...|USE|ANY|WS
+      path              TEXT NOT NULL,    -- as written in source
+      full_path         TEXT,             -- prefix-joined when derivable in-file, else NULL
+      handler_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
+      handler_name      TEXT,             -- raw name when unresolved or anonymous
+      start_line        INTEGER NOT NULL,
+      detail            TEXT              -- JSON: middleware, blueprint, mounted router, ...
+    );
+    CREATE INDEX idx_routes_file ON routes(file_id);
+    CREATE INDEX idx_routes_path ON routes(path);
+`;
+
 /**
  * In-place migration from version N to N+1, run inside a transaction.
  * Leave a version out to force drop-and-rebuild for upgrades crossing it.
@@ -56,7 +74,9 @@ const ASSETS_DDL = `
  * leave them empty forever — chunks only fill when a file reindexes, and
  * unchanged hashes never do. A rebuild reindexes everything once.
  * 3->4 is safe in place: assets were never indexed before, so the next
- * sweep discovers every asset file as new and fills the tables.)
+ * sweep discovers every asset file as new and fills the tables.
+ * 4->5 is deliberately absent for the same reason as 2->3: files.is_test
+ * and routes only fill when a file reindexes, and unchanged hashes never do.)
  */
 const MIGRATIONS: Record<number, (db: Database) => void> = {
   3: (db) => db.exec(ASSETS_DDL),
@@ -127,6 +147,7 @@ function generationMatches(db: Database): boolean {
 
 function dropAll(db: Database): void {
   db.exec(`
+    DROP TABLE IF EXISTS routes;
     DROP TABLE IF EXISTS asset_refs;
     DROP TABLE IF EXISTS assets;
     DROP TABLE IF EXISTS chunk_vectors;
@@ -155,7 +176,8 @@ function createAll(db: Database): void {
       hash       TEXT NOT NULL,          -- sha1 of contents
       size       INTEGER NOT NULL,
       mtime_ms   REAL NOT NULL,
-      indexed_at INTEGER NOT NULL        -- unix ms
+      indexed_at INTEGER NOT NULL,       -- unix ms
+      is_test    INTEGER NOT NULL DEFAULT 0  -- path-classified test file
     );
 
     CREATE TABLE symbols (
@@ -231,6 +253,7 @@ function createAll(db: Database): void {
     END;
     ${CHUNKS_DDL}
     ${ASSETS_DDL}
+    ${ROUTES_DDL}
   `);
   db.prepare(`INSERT INTO meta (key, value) VALUES ('schema_version', ?)`).run(
     String(SCHEMA_VERSION),

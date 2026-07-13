@@ -57,6 +57,8 @@ const UBIQUITOUS_NAMES: Partial<Record<LanguageId, ReadonlySet<string>>> = {
   typescript: JS_UBIQUITOUS,
   tsx: JS_UBIQUITOUS,
   javascript: JS_UBIQUITOUS,
+  vue: JS_UBIQUITOUS,
+  svelte: JS_UBIQUITOUS,
   python: new Set([
     // builtins
     'abs', 'all', 'any', 'ascii', 'bin', 'bool', 'bytearray', 'bytes', 'callable', 'chr',
@@ -114,6 +116,95 @@ const UBIQUITOUS_NAMES: Partial<Record<LanguageId, ReadonlySet<string>>> = {
     'new', 'free', 'queue_free', 'duplicate', 'instantiate',
     'get_node', 'has_node', 'get_parent', 'get_tree', 'get_children', 'add_child',
     'remove_child', 'set_process', 'set_physics_process', 'play', 'stop',
+  ]),
+  php: new Set([
+    'count', 'in_array', 'array_map', 'array_filter', 'array_merge', 'array_keys',
+    'array_values', 'array_key_exists', 'implode', 'explode', 'sprintf', 'printf',
+    'str_replace', 'strlen', 'substr', 'strpos', 'trim', 'strtolower', 'strtoupper',
+    'is_array', 'is_string', 'is_null', 'is_numeric', 'isset', 'empty', 'unset',
+    'json_encode', 'json_decode', 'var_dump', 'print_r', 'die', 'exit', 'echo',
+    'array_push', 'array_pop', 'array_shift', 'usort', 'sort', 'compact', 'extract',
+    // pervasive method names
+    'get', 'set', 'has', 'make', 'create', 'toArray', 'toString', 'render', 'handle',
+  ]),
+  ruby: new Set([
+    // Kernel / Object staples — everything in Ruby is a call, so this set
+    // carries the false-reference suppression load
+    'puts', 'p', 'pp', 'print', 'raise', 'lambda', 'proc', 'require', 'require_relative',
+    'attr_accessor', 'attr_reader', 'attr_writer', 'include', 'extend', 'prepend',
+    'new', 'freeze', 'frozen?', 'dup', 'clone', 'send', 'public_send', 'respond_to?',
+    'instance_variable_get', 'instance_variable_set', 'define_method', 'block_given?',
+    'to_s', 'to_sym', 'to_a', 'to_h', 'to_i', 'to_f', 'inspect', 'hash', 'eql?', 'equal?',
+    'each', 'each_with_index', 'each_with_object', 'map', 'flat_map', 'select', 'reject',
+    'reduce', 'inject', 'detect', 'find', 'find_all', 'sort', 'sort_by', 'group_by',
+    'first', 'last', 'push', 'pop', 'shift', 'unshift', 'length', 'size', 'empty?',
+    'nil?', 'is_a?', 'kind_of?', 'instance_of?', 'key?', 'keys', 'values', 'merge',
+    'fetch', 'dig', 'join', 'split', 'strip', 'gsub', 'sub', 'match', 'match?',
+    'start_with?', 'end_with?', 'upcase', 'downcase', 'call', 'tap', 'then', 'yield_self',
+  ]),
+  lua: new Set([
+    'print', 'pairs', 'ipairs', 'type', 'tostring', 'tonumber', 'pcall', 'xpcall', 'error',
+    'assert', 'select', 'next', 'unpack', 'rawget', 'rawset', 'rawequal', 'require',
+    'setmetatable', 'getmetatable', 'insert', 'remove', 'concat', 'format', 'gsub', 'gmatch',
+    'match', 'find', 'sub', 'len', 'sort', 'floor', 'ceil', 'abs', 'max', 'min', 'random',
+  ]),
+  solidity: new Set([
+    'require', 'assert', 'revert', 'keccak256', 'sha256', 'ripemd160', 'ecrecover',
+    'addmod', 'mulmod', 'selfdestruct', 'blockhash', 'gasleft', 'payable', 'push', 'pop',
+    'transfer', 'send', 'call', 'delegatecall', 'staticcall', 'encode', 'encodePacked',
+    'encodeWithSelector', 'encodeWithSignature', 'decode', 'balance', 'length',
+  ]),
+  zig: new Set([
+    // @-builtins are captured with their sigil and never collide; these are
+    // pervasive std/method names
+    'init', 'deinit', 'len', 'append', 'appendSlice', 'pop', 'items', 'allocator', 'alloc',
+    'free', 'dupe', 'print', 'format', 'writeAll', 'write', 'read', 'next', 'get', 'put',
+    'contains', 'count', 'clearRetainingCapacity', 'toOwnedSlice', 'slice', 'eql', 'expect',
+    'expectEqual', 'expectError', 'parseInt', 'parseFloat', 'intCast', 'enumFromInt',
+  ]),
+  swift: new Set([
+    'print', 'map', 'filter', 'reduce', 'compactMap', 'flatMap', 'forEach', 'append',
+    'count', 'isEmpty', 'contains', 'first', 'last', 'sorted', 'joined', 'description',
+    'hashValue', 'init', 'append', 'insert', 'remove', 'removeAll', 'index', 'dropFirst',
+    'String', 'Int', 'Bool', 'Double', 'Float', 'Array', 'Dictionary', 'Set', 'Optional',
+    'Error', 'Result', 'Data', 'URL', 'Date', 'UUID', 'Codable', 'Equatable', 'Hashable',
+    'Comparable', 'Identifiable', 'CustomStringConvertible', 'Sendable',
+  ]),
+  scala: new Set([
+    'println', 'print', 'map', 'flatMap', 'filter', 'filterNot', 'foreach', 'foldLeft',
+    'foldRight', 'reduce', 'collect', 'apply', 'unapply', 'copy', 'toString', 'equals',
+    'hashCode', 'head', 'tail', 'headOption', 'mkString', 'toList', 'toSeq', 'toMap',
+    'toSet', 'getOrElse', 'orElse', 'isEmpty', 'nonEmpty', 'contains', 'exists', 'forall',
+    'size', 'length', 'zip', 'take', 'drop', 'groupBy', 'sortBy', 'Some', 'None', 'Option',
+    'List', 'Seq', 'Vector', 'Map', 'Set', 'Array', 'Future', 'Try', 'Either', 'Left', 'Right',
+  ]),
+  dart: new Set([
+    'print', 'toString', 'map', 'where', 'forEach', 'add', 'addAll', 'remove', 'contains',
+    'length', 'isEmpty', 'isNotEmpty', 'first', 'last', 'toList', 'toSet', 'join', 'split',
+    'then', 'catchError', 'setState', 'build', 'dispose', 'initState', 'createState',
+    'jsonEncode', 'jsonDecode', 'identical', 'call', 'noSuchMethod',
+    'String', 'List', 'Map', 'Set', 'Future', 'Stream', 'Duration', 'Widget', 'BuildContext',
+  ]),
+  terraform: new Set([
+    'var', 'local', 'module', 'each', 'count', 'self', 'terraform', 'data', 'path',
+    'format', 'length', 'lookup', 'merge', 'concat', 'file', 'templatefile', 'toset',
+    'tolist', 'tomap', 'jsonencode', 'jsondecode', 'coalesce', 'try', 'can', 'cidrsubnet',
+    'value', 'key', 'name', 'id', 'arn', 'region', 'tags', 'type', 'default', 'source',
+  ]),
+  pascal: new Set([
+    'WriteLn', 'ReadLn', 'Write', 'Read', 'Create', 'Free', 'Destroy', 'FreeAndNil',
+    'Assigned', 'Result', 'Self', 'Length', 'SetLength', 'Copy', 'Inc', 'Dec', 'Ord',
+    'Chr', 'High', 'Low', 'Exit', 'Break', 'Continue', 'Format', 'IntToStr', 'StrToInt',
+    'FloatToStr', 'Trim', 'UpperCase', 'LowerCase', 'Pos', 'Delete', 'Insert', 'New',
+    'Dispose', 'GetMem', 'FreeMem', 'SizeOf', 'Add', 'Remove', 'IndexOf', 'Clear', 'Count',
+  ]),
+  nix: new Set([
+    'import', 'toString', 'map', 'filter', 'length', 'head', 'tail', 'elem', 'elemAt',
+    'concatMap', 'attrNames', 'attrValues', 'hasAttr', 'getAttr', 'removeAttrs', 'listToAttrs',
+    'mkDerivation', 'mkOption', 'mkIf', 'mkMerge', 'mkForce', 'mkDefault', 'mkEnableOption',
+    'fetchFromGitHub', 'fetchurl', 'fetchgit', 'callPackage', 'writeText', 'writeShellScriptBin',
+    'optional', 'optionals', 'optionalString', 'concatStringsSep', 'splitString', 'replaceStrings',
+    'substring', 'stringLength', 'toJSON', 'fromJSON', 'throw', 'abort', 'trace', 'seq',
   ]),
 };
 
@@ -190,6 +281,7 @@ export async function resolveWorkspace(
   // 1. imports -> files (always global: a new file can satisfy anyone's import)
   const importRows = store.listImportRows();
   const goModule = readGoModule(rootDir);
+  const dartPackage = readDartPackage(rootDir);
   // Godot res:// paths are relative to their project.godot dir — a workspace
   // can hold many projects (monorepos of samples/games). Longest root first.
   const godotRoots = store
@@ -199,7 +291,7 @@ export async function resolveWorkspace(
     .sort((a, b) => b.length - a.length);
   const resolutions: Array<{ id: number; fileId: number | null }> = [];
   for (const imp of importRows) {
-    const target = resolveImport(imp, pathToFileId, goModule, godotRoots);
+    const target = resolveImport(imp, pathToFileId, goModule, godotRoots, dartPackage);
     // a changed import target invalidates that file's occurrence resolutions
     if (scope && target !== imp.resolvedFileId) scope.add(imp.fileId);
     resolutions.push({ id: imp.id, fileId: target });
@@ -288,6 +380,21 @@ export async function resolveWorkspace(
   // atomic: clear stale state and write the new pass in one transaction so a
   // crash mid-pass can never strand the graph half-cleared
   store.applyResolutionPass(scope ?? null, occResolutions, edges);
+
+  // 5. route handlers declared by name (Express fn refs, Django dotted paths).
+  // Always the full unresolved set: reindexing the handler's file nulls the
+  // link (ON DELETE SET NULL) even when the route's own file isn't in scope.
+  for (const route of store.routesWithUnresolvedHandlers()) {
+    const name = route.handlerName.split('.').pop();
+    if (!name) continue;
+    const candidates = store
+      .symbolsByExactName(name)
+      .filter((s) => s.kind === 'function' || s.kind === 'method' || s.kind === 'class');
+    const sameFile = candidates.filter((c) => c.fileId === route.fileId);
+    const pick = sameFile.length === 1 ? sameFile[0] : candidates.length === 1 ? candidates[0] : null;
+    if (pick) store.setRouteHandler(route.id, pick.id);
+  }
+
   store.setMeta('resolved_at', String(Date.now()));
 
   return {
@@ -435,13 +542,24 @@ function readGoModule(rootDir: string): string | null {
   }
 }
 
+/** pubspec.yaml `name:` — makes `package:<self>/...` imports resolvable. */
+function readDartPackage(rootDir: string): string | null {
+  try {
+    const text = readFileSync(join(rootDir, 'pubspec.yaml'), 'utf8');
+    return /^name:\s*(\S+)/m.exec(text)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function resolveImport(
   imp: ImportRow,
   pathToFileId: Map<string, number>,
   goModule: string | null,
   godotRoots: string[],
+  dartPackage: string | null,
 ): number | null {
-  const path = resolveImportPath(imp, pathToFileId, goModule, godotRoots);
+  const path = resolveImportPath(imp, pathToFileId, goModule, godotRoots, dartPackage);
   return path === null ? null : (pathToFileId.get(path) ?? null);
 }
 
@@ -450,6 +568,7 @@ function resolveImportPath(
   pathToFileId: Map<string, number>,
   goModule: string | null,
   godotRoots: string[],
+  dartPackage: string | null,
 ): string | null {
   const has = (p: string): boolean => pathToFileId.has(p);
   const dir = parentDir(imp.path);
@@ -457,7 +576,9 @@ function resolveImportPath(
   switch (imp.lang) {
     case 'typescript':
     case 'tsx':
-    case 'javascript': {
+    case 'javascript':
+    case 'vue':
+    case 'svelte': {
       const spec = imp.specifier;
       if (!spec.startsWith('.')) return null; // bare specifier: external package
       const base = normalize(joinPosix(dir, spec));
@@ -468,7 +589,8 @@ function resolveImportPath(
       );
       if (tsSwap !== base) candidates.push(tsSwap, tsSwap.replace(/\.ts$/, '.tsx'));
       candidates.push(base);
-      for (const ext of ['.ts', '.tsx', '.d.ts', '.js', '.jsx', '.mjs', '.cjs']) {
+      // SFC components import (and are imported) with explicit extensions too
+      for (const ext of ['.ts', '.tsx', '.d.ts', '.js', '.jsx', '.mjs', '.cjs', '.vue', '.svelte']) {
         candidates.push(base + ext);
       }
       for (const idx of ['/index.ts', '/index.tsx', '/index.js', '/index.jsx']) {
@@ -599,6 +721,123 @@ function resolveImportPath(
       }
       if (spec.startsWith('.')) {
         const n = normalize(joinPosix(dir, spec));
+        if (has(n)) return n;
+      }
+      return null;
+    }
+
+    case 'php':
+      // PSR-4 namespace -> file mapping needs composer.json autoload roots;
+      // until then the workspace-global unique-name tier connects classes
+      return null;
+
+    case 'lua': {
+      // require("a.b") -> a/b.lua, a/b/init.lua, plus LuaRocks/Neovim lua/ roots
+      const stem = imp.specifier.replace(/\./g, '/');
+      for (const cand of [`${stem}.lua`, `${stem}/init.lua`, `lua/${stem}.lua`, `lua/${stem}/init.lua`]) {
+        const n = normalize(cand);
+        if (has(n)) return n;
+      }
+      const local = normalize(joinPosix(dir, `${stem}.lua`));
+      return has(local) ? local : null;
+    }
+
+    case 'solidity': {
+      const spec = imp.specifier;
+      if (!spec.startsWith('.')) return null; // node_modules / remapped paths
+      const n = normalize(joinPosix(dir, spec));
+      return has(n) ? n : null;
+    }
+
+    case 'zig': {
+      const spec = imp.specifier;
+      if (!spec.endsWith('.zig')) return null; // std / named packages
+      // @import paths are importer-relative, './' prefix optional
+      const n = normalize(joinPosix(dir, spec));
+      return has(n) ? n : null;
+    }
+
+    case 'nix': {
+      // path_expression text: ./helpers.nix, ./dir, ../up/x.nix
+      const spec = imp.specifier;
+      const base = normalize(joinPosix(dir, spec));
+      for (const cand of [base, `${base}.nix`, `${base}/default.nix`]) {
+        if (has(cand)) return cand;
+      }
+      return null;
+    }
+
+    case 'swift':
+      return null; // module imports; SPM/Xcode module maps are out of scope
+
+    case 'terraform': {
+      // module source = "./modules/net" -> that directory's main.tf (or any .tf)
+      const spec = imp.specifier;
+      if (!spec.startsWith('.')) return null; // registry/remote module
+      const base = normalize(joinPosix(dir, spec));
+      if (has(`${base}/main.tf`)) return `${base}/main.tf`;
+      const inDir = [...pathToFileId.keys()]
+        .filter((p) => p.startsWith(`${base}/`) && p.endsWith('.tf') && !p.slice(base.length + 1).includes('/'))
+        .sort();
+      return inDir[0] ?? null;
+    }
+
+    case 'pascal': {
+      // uses SysUtils, App.Models — case-insensitive basename match
+      const stem = imp.specifier.replace(/\./g, '/').toLowerCase();
+      const base = stem.split('/').pop()!;
+      for (const ext of ['.pas', '.pp']) {
+        const matches = [...pathToFileId.keys()].filter((p) => {
+          const lower = p.toLowerCase();
+          return lower === `${stem}${ext}` || lower.endsWith(`/${stem}${ext}`) || lower.endsWith(`/${base}${ext}`);
+        });
+        if (matches.length === 1) return matches[0]!;
+      }
+      return null;
+    }
+
+    case 'scala': {
+      // like java: package path -> source path; also try dropping the class segment
+      const spec = imp.specifier.replace(/\.\*$/, '');
+      const segs = spec.split('.');
+      for (const stem of [segs.join('/'), segs.slice(0, -1).join('/')]) {
+        if (!stem) continue;
+        for (const ext of ['.scala', '.sc']) {
+          const suffix = stem + ext;
+          const matches = [...pathToFileId.keys()].filter((p) => p === suffix || p.endsWith(`/${suffix}`));
+          if (matches.length === 1) return matches[0]!;
+        }
+      }
+      return null;
+    }
+
+    case 'dart': {
+      const spec = imp.specifier;
+      if (spec.startsWith('dart:')) return null; // sdk library
+      if (spec.startsWith('package:')) {
+        const rest = spec.slice('package:'.length);
+        const slash = rest.indexOf('/');
+        if (slash === -1) return null;
+        const pkg = rest.slice(0, slash);
+        if (pkg !== dartPackage) return null; // external package
+        const n = normalize(`lib/${rest.slice(slash + 1)}`);
+        return has(n) ? n : null;
+      }
+      const n = normalize(joinPosix(dir, spec));
+      return has(n) ? n : null;
+    }
+
+    case 'ruby': {
+      const spec = imp.specifier;
+      if (spec.startsWith('./')) {
+        // require_relative: sibling path, .rb implied
+        const stem = normalize(joinPosix(dir, spec.slice(2)));
+        for (const cand of [stem, `${stem}.rb`]) if (has(cand)) return cand;
+        return null;
+      }
+      // require 'foo/bar' — gems are external, but same-repo lib/ layouts resolve
+      for (const cand of [`lib/${spec}.rb`, `${spec}.rb`]) {
+        const n = normalize(cand);
         if (has(n)) return n;
       }
       return null;

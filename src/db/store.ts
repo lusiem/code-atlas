@@ -7,9 +7,12 @@ import type { ExtractedChunk } from '../embeddings/chunker.js';
 import type {
   EdgeKind,
   EdgeProvenance,
+  ExtractedRoute,
   FileExtraction,
+  FrameworkId,
   LanguageId,
   OccurrenceRole,
+  RouteRow,
   SymbolBase,
   SymbolKind,
   SymbolRow,
@@ -20,6 +23,8 @@ export interface FileRecord {
   path: string;
   lang: LanguageId;
   hash: string;
+  /** Path-classified test file (SQLite 0/1, truthy in JS). */
+  isTest: boolean;
 }
 
 export interface SymbolSearchOptions {
@@ -92,12 +97,14 @@ export class Store {
 
   getFileByPath(path: string): FileRecord | undefined {
     return this.db
-      .prepare(`SELECT id, path, lang, hash FROM files WHERE path = ?`)
+      .prepare(`SELECT id, path, lang, hash, is_test AS isTest FROM files WHERE path = ?`)
       .get(path) as FileRecord | undefined;
   }
 
   listFiles(): FileRecord[] {
-    return this.db.prepare(`SELECT id, path, lang, hash FROM files`).all() as FileRecord[];
+    return this.db
+      .prepare(`SELECT id, path, lang, hash, is_test AS isTest FROM files`)
+      .all() as FileRecord[];
   }
 
   /**
@@ -105,9 +112,17 @@ export class Store {
    * Deletes child rows explicitly (does not rely on FK cascades firing FTS triggers).
    */
   replaceFile(
-    meta: { path: string; lang: LanguageId; hash: string; size: number; mtimeMs: number },
+    meta: {
+      path: string;
+      lang: LanguageId;
+      hash: string;
+      size: number;
+      mtimeMs: number;
+      isTest: boolean;
+    },
     extraction: FileExtraction,
     chunks: ExtractedChunk[] = [],
+    routes: ExtractedRoute[] = [],
   ): number {
     const txn = this.db.transaction(() => {
       // mark the graph stale in the same transaction; only a completed
@@ -131,14 +146,14 @@ export class Store {
       const fileId = existing
         ? (this.db
             .prepare(
-              `UPDATE files SET lang=?, hash=?, size=?, mtime_ms=?, indexed_at=? WHERE id=? RETURNING id`,
+              `UPDATE files SET lang=?, hash=?, size=?, mtime_ms=?, indexed_at=?, is_test=? WHERE id=? RETURNING id`,
             )
-            .get(meta.lang, meta.hash, meta.size, meta.mtimeMs, Date.now(), existing.id) as { id: number }).id
+            .get(meta.lang, meta.hash, meta.size, meta.mtimeMs, Date.now(), meta.isTest ? 1 : 0, existing.id) as { id: number }).id
         : (this.db
             .prepare(
-              `INSERT INTO files (path, lang, hash, size, mtime_ms, indexed_at) VALUES (?,?,?,?,?,?) RETURNING id`,
+              `INSERT INTO files (path, lang, hash, size, mtime_ms, indexed_at, is_test) VALUES (?,?,?,?,?,?,?) RETURNING id`,
             )
-            .get(meta.path, meta.lang, meta.hash, meta.size, meta.mtimeMs, Date.now()) as { id: number }).id;
+            .get(meta.path, meta.lang, meta.hash, meta.size, meta.mtimeMs, Date.now(), meta.isTest ? 1 : 0) as { id: number }).id;
 
       const insertSymbol = this.db.prepare(`
         INSERT INTO symbols (file_id, name, qualified_name, kind, start_line, start_col,
@@ -207,6 +222,40 @@ export class Store {
           .lastInsertRowid;
         if (reused) insertVector.run(chunkId, reused);
       }
+
+      if (routes.length > 0) {
+        const insertRoute = this.db.prepare(`
+          INSERT INTO routes (file_id, framework, method, path, full_path,
+                              handler_symbol_id, handler_name, start_line, detail)
+          VALUES (?,?,?,?,?,?,?,?,?)`);
+        for (const route of routes) {
+          // positional handler: innermost callable extraction symbol on that line
+          let handlerId: number | null = null;
+          if (route.handlerLine !== null) {
+            let bestSpan = Number.MAX_SAFE_INTEGER;
+            extraction.symbols.forEach((sym, i) => {
+              if (sym.startLine > route.handlerLine! || sym.endLine < route.handlerLine!) return;
+              if (sym.kind !== 'function' && sym.kind !== 'method' && sym.kind !== 'constructor') return;
+              const span = sym.endLine - sym.startLine;
+              if (span < bestSpan) {
+                bestSpan = span;
+                handlerId = ids[i] ?? null;
+              }
+            });
+          }
+          insertRoute.run(
+            fileId,
+            route.framework,
+            route.method,
+            route.path,
+            route.fullPath,
+            handlerId,
+            route.handlerName,
+            route.startLine,
+            route.detail,
+          );
+        }
+      }
       return fileId;
     });
     return txn();
@@ -230,6 +279,7 @@ export class Store {
                             OR dst_symbol_id IN (SELECT id FROM symbols WHERE file_id=?)`,
       )
       .run(fileId, fileId);
+    this.db.prepare(`DELETE FROM routes WHERE file_id=?`).run(fileId);
     this.db.prepare(`DELETE FROM occurrences WHERE file_id=?`).run(fileId);
     this.db.prepare(`DELETE FROM imports WHERE file_id=?`).run(fileId);
     // fires the FTS delete trigger per row
@@ -798,6 +848,87 @@ export class Store {
     return this.db
       .prepare(`SELECT engine, kind, COUNT(*) AS n FROM assets GROUP BY engine, kind ORDER BY engine, kind`)
       .all() as Array<{ engine: string; kind: string; n: number }>;
+  }
+
+  // ---------- web-framework routes ----------
+
+  routeStats(): Array<{ framework: FrameworkId; n: number }> {
+    return this.db
+      .prepare(`SELECT framework, COUNT(*) AS n FROM routes GROUP BY framework ORDER BY n DESC`)
+      .all() as Array<{ framework: FrameworkId; n: number }>;
+  }
+
+  listRoutes(opts: {
+    framework?: FrameworkId;
+    method?: string;
+    pathContains?: string;
+    limit: number;
+    offset: number;
+  }): RouteRow[] {
+    const filters: string[] = [];
+    const params: unknown[] = [];
+    if (opts.framework) {
+      filters.push(`r.framework = ?`);
+      params.push(opts.framework);
+    }
+    if (opts.method) {
+      filters.push(`(r.method = ? OR r.method = 'ANY')`);
+      params.push(opts.method.toUpperCase());
+    }
+    if (opts.pathContains) {
+      filters.push(`(r.path LIKE ? OR r.full_path LIKE ?)`);
+      params.push(`%${opts.pathContains}%`, `%${opts.pathContains}%`);
+    }
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    return this.db
+      .prepare(
+        `SELECT r.id, r.framework, r.method, r.path, r.full_path AS fullPath,
+                f.path AS filePath, r.start_line AS startLine,
+                r.handler_symbol_id AS handlerSymbolId, r.handler_name AS handlerName, r.detail
+         FROM routes r JOIN files f ON f.id = r.file_id
+         ${where}
+         ORDER BY COALESCE(r.full_path, r.path), r.method
+         LIMIT ? OFFSET ?`,
+      )
+      .all(...params, opts.limit, opts.offset) as RouteRow[];
+  }
+
+  /** Routes whose handler is only a name so far — the resolver fills these. */
+  routesWithUnresolvedHandlers(fileIds?: Iterable<number>): Array<{
+    id: number;
+    fileId: number;
+    handlerName: string;
+  }> {
+    const scope = fileIds ? [...fileIds] : null;
+    if (scope && scope.length === 0) return [];
+    const where = scope ? `AND r.file_id IN (${scope.map(() => '?').join(',')})` : '';
+    return this.db
+      .prepare(
+        `SELECT r.id, r.file_id AS fileId, r.handler_name AS handlerName
+         FROM routes r
+         WHERE r.handler_symbol_id IS NULL AND r.handler_name IS NOT NULL ${where}`,
+      )
+      .all(...(scope ?? [])) as Array<{ id: number; fileId: number; handlerName: string }>;
+  }
+
+  setRouteHandler(routeId: number, symbolId: number): void {
+    this.db.prepare(`UPDATE routes SET handler_symbol_id = ? WHERE id = ?`).run(symbolId, routeId);
+  }
+
+  /** Routes handled by any of the given symbols — change_impact's [ROUTE] tags. */
+  routesForSymbols(symbolIds: Iterable<number>): Map<number, Array<{ method: string; path: string }>> {
+    const ids = [...symbolIds];
+    const out = new Map<number, Array<{ method: string; path: string }>>();
+    if (ids.length === 0) return out;
+    const stmt = this.db.prepare(
+      `SELECT handler_symbol_id AS symbolId, method, COALESCE(full_path, path) AS path
+       FROM routes WHERE handler_symbol_id = ?`,
+    );
+    for (const id of ids) {
+      const rows = stmt.all(id) as Array<{ symbolId: number; method: string; path: string }>;
+      if (rows.length > 0) out.set(id, rows.map((r) => ({ method: r.method, path: r.path })));
+    }
+    return out;
   }
 
   /** Unity: guid declared by `<path>.meta`. */

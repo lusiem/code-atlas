@@ -9,9 +9,12 @@ import { lspHoverFor } from '../lsp/overlay.js';
 import { formatSymbolLine, kindPrefix, paginationFooter, readSnippet } from './format.js';
 import { registerDiagramTool } from './diagram.js';
 import { registerEngineTools } from './engines.js';
+import { registerFrameworkTools } from './frameworks.js';
 import { registerGraphTools } from './graph.js';
+import { registerImpactTool } from './impact.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { LANGUAGES } from '../languages.js';
 import type { LanguageId, SymbolKind, SymbolRow } from '../types.js';
 
 const KIND_VALUES = [
@@ -20,10 +23,8 @@ const KIND_VALUES = [
   'module', 'signal', 'macro', 'impl',
 ] as const;
 
-const LANG_VALUES = [
-  'typescript', 'tsx', 'javascript', 'python', 'c', 'cpp', 'rust', 'go', 'java', 'kotlin',
-  'c_sharp', 'gdscript',
-] as const;
+// derived from the language registry so new languages are filterable for free
+const LANG_VALUES = LANGUAGES.map((l) => l.id) as [LanguageId, ...LanguageId[]];
 
 function text(s: string) {
   return { content: [{ type: 'text' as const, text: s }] };
@@ -42,6 +43,8 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
   registerGraphTools(server, ctx);
   registerEngineTools(server, ctx);
   registerDiagramTool(server, ctx);
+  registerImpactTool(server, ctx);
+  registerFrameworkTools(server, ctx);
 
   server.registerTool(
     'project_overview',
@@ -76,6 +79,11 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
         }
         lines.push('', 'engine assets:');
         for (const [engine, parts] of byEngine) lines.push(`  ${engine}: ${parts.join(', ')}`);
+      }
+      const routeStats = store.routeStats();
+      if (routeStats.length > 0) {
+        lines.push('', 'frameworks:');
+        for (const r of routeStats) lines.push(`  ${r.framework}: ${r.n} routes`);
       }
       lines.push('', `extractors active: ${supportedLanguages().join(', ')}`);
       return text(lines.join('\n'));

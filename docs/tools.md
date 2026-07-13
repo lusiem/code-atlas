@@ -88,6 +88,35 @@ call path (2 hops):
 function report (src/report.ts:12) -> function calculate (src/calc.ts:8) -> function add (src/math.ts:5)
 ```
 
+### `change_impact` — `{symbol_id | path+line | name | files[] | (no args = git diff), max_depth?, min_confidence?, tests_only?}`
+Blast radius of a change: reverse BFS over call/type edges plus transitive import
+reachability, affected **TEST** files first. With no arguments it shells out to git and
+analyzes the uncommitted diff — hunk-level, so only symbols you actually touched seed the
+traversal (untracked files seed whole, deleted files seed their importers). Warns when the
+index is stale against the working tree. Route handlers in the result carry their route.
+```
+seeds: git: 2 modified, 1 untracked
+impact: 14 files affected (5 TEST) within depth 6, 41 symbols via call/type edges
+
+TEST test/resolver.test.ts   — via calls→resolveWorkspace [index 0.81] at resolveScope (depth 2)
+TEST test/store.test.ts      — via import chain (depth 1)
+     src/indexer/indexer.ts  — via calls→replaceFile [index 0.95] at Indexer.indexOne (depth 1)
+     src/tools/routes.ts     — via calls→listRoutes [index 0.90] at handler (depth 2) [ROUTE GET /users/:id]
+```
+
+### `list_routes` — `{framework?, method?, path_contains?}`
+Web-framework routes (Express, Fastify, NestJS, FastAPI, Flask, Django) with handler symbols:
+```
+GET    /items/{item_id}  →  function read_item — def read_item(item_id: int)  (api/items.py:6) #212
+GET    /users  →  function listUsers  (api/users.ts:1) #37
+USE    /api  →  "apiRouter" (unresolved)  (api/server.ts:6)
+```
+
+### `find_route` — `{url}`
+*Which code serves this URL?* Matches a concrete path against indexed patterns —
+`:id`, `{id}`, `<int:pk>` segments are wildcards; `find_route {url: "GET /items/42"}` returns
+the `read_item` line above. Handler `#id`s chain into `call_hierarchy` and `change_impact`.
+
 ### `generate_diagram` — `{kind: imports|calls|types|call_path, …}`
 The graph tools rendered as Mermaid instead of text — the output is a ` ```mermaid ` fence ready to
 paste into GitHub markdown, docs, or any Mermaid viewer. `imports` draws the workspace import graph

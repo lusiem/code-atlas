@@ -22,6 +22,8 @@ const VSCODE_GRAMMARS = {
   go: 'go',
   java: 'java',
   c_sharp: 'c-sharp',
+  php: 'php',
+  ruby: 'ruby',
 };
 
 // pinned release downloads: bump the version and checksum together
@@ -33,6 +35,26 @@ const DOWNLOAD_GRAMMARS = {
   kotlin: {
     url: 'https://github.com/fwcd/tree-sitter-kotlin/releases/download/0.3.8/tree-sitter-kotlin.wasm',
     sha256: 'c624e7443b371c28adc5d81674e73067564c12555ebe3ed96a6c8db814b7602d',
+  },
+  lua: {
+    url: 'https://github.com/tree-sitter-grammars/tree-sitter-lua/releases/download/v0.5.0/tree-sitter-lua.wasm',
+    sha256: 'df08a1704e504c70b8dba4a3e6f8e0c99a4fb94e1b1693d2969f53141d09f0d4',
+  },
+  zig: {
+    url: 'https://github.com/tree-sitter-grammars/tree-sitter-zig/releases/download/v1.1.2/tree-sitter-zig.wasm',
+    sha256: '54b3b83dd9c62da5815f06132bc3fc914d9dcc780370b32416446a0b7969e8c6',
+  },
+  swift: {
+    url: 'https://github.com/alex-pinkus/tree-sitter-swift/releases/download/0.7.3/tree-sitter-swift.wasm',
+    sha256: '0258a7ef17303a8079ffe0748b3583d59656b5c3e8653fca7b6451b3e6689eb2',
+  },
+  scala: {
+    url: 'https://github.com/tree-sitter/tree-sitter-scala/releases/download/v0.26.0/tree-sitter-scala.wasm',
+    sha256: '026c2f9a8374109861f6621f4759ef690faebcaa67c2d56b06af3786c206b030',
+  },
+  terraform: {
+    url: 'https://github.com/tree-sitter-grammars/tree-sitter-hcl/releases/download/v1.2.0/tree-sitter-terraform.wasm',
+    sha256: '59dbcbb0f08eb78b78f37510834559a48ce5c9d4866c978d62c6390796461cb5',
   },
 };
 

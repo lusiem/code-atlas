@@ -45,7 +45,7 @@ describe('Store', () => {
   let store: Store;
   afterEach(() => store?.close());
 
-  const meta = { path: 'src/user.ts', lang: 'typescript' as const, hash: 'h1', size: 100, mtimeMs: 1 };
+  const meta = { path: 'src/user.ts', lang: 'typescript' as const, hash: 'h1', size: 100, mtimeMs: 1, isTest: false };
 
   it('replaceFile inserts symbols with qualified names and parents', () => {
     store = new Store(':memory:');
