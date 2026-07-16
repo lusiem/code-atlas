@@ -9,6 +9,7 @@ import {
   formatSymbolLine, kindPrefix, normalizeRel, paginationFooter, readSnippet, text,
 } from './format.js';
 import { clampText, maxTokensArg } from './tokens.js';
+import { registerAgentTools } from './agent.js';
 import { registerDiagramTool } from './diagram.js';
 import { registerEngineTools } from './engines.js';
 import { registerFrameworkTools } from './frameworks.js';
@@ -30,6 +31,7 @@ const LANG_VALUES = LANGUAGES.map((l) => l.id) as [LanguageId, ...LanguageId[]];
 
 export function registerTools(server: McpServer, ctx: AppContext): void {
   registerGraphTools(server, ctx);
+  registerAgentTools(server, ctx);
   registerEngineTools(server, ctx);
   registerDiagramTool(server, ctx);
   registerImpactTool(server, ctx);

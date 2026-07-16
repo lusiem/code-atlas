@@ -61,6 +61,7 @@ describe('MCP server end-to-end', () => {
       'search_reflection',
       'search_symbols',
       'semantic_search',
+      'tests_for_symbol',
       'trace_path',
       'type_hierarchy',
     ]);
