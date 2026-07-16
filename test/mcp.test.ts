@@ -49,6 +49,7 @@ describe('MCP server end-to-end', () => {
       'find_asset_references',
       'find_references',
       'find_route',
+      'find_similar_code',
       'generate_diagram',
       'get_dependencies',
       'get_file_outline',

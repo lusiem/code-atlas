@@ -1,8 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { AppContext } from '../context.js';
+import { findSimilar } from '../analysis/similarity.js';
 import { testsForSymbol } from '../analysis/tests-for.js';
 import { verifyChanges } from '../analysis/verify.js';
+import type { LanguageId } from '../types.js';
+import { LANGUAGES } from '../languages.js';
 import { formatSymbolLine, text } from './format.js';
 import { findSymbol, symbolArgs } from './graph.js';
 import { clampText, maxTokensArg } from './tokens.js';
@@ -95,6 +98,56 @@ export function registerAgentTools(server: McpServer, ctx: AppContext): void {
         lines.push('');
         for (const f of result.findings) lines.push(`${f.severity} ${f.message}`);
       }
+      return text(clampText(lines.join('\n'), args.max_tokens));
+    },
+  );
+
+  server.registerTool(
+    'find_similar_code',
+    {
+      title: 'Find similar code',
+      description:
+        'Does a helper for this already exist? Near-duplicate search over the indexed code: target an ' +
+        'existing symbol or paste a snippet. Uses local embedding vectors when ready ([cos]), degrading ' +
+        'to token-shingle text similarity ([jaccard]) while embedding coverage builds.',
+      inputSchema: {
+        ...symbolArgs,
+        snippet: z.string().optional()
+          .describe('code or a description of it, when there is no existing symbol to compare'),
+        k: z.number().int().min(1).max(50).default(10),
+        min_similarity: z.number().min(0).max(1).default(0.8)
+          .describe('cosine floor for embedding hits (the text fallback uses its own)'),
+        lang: z.enum(LANGUAGES.map((l) => l.id) as [LanguageId, ...LanguageId[]]).optional(),
+        ...maxTokensArg,
+      },
+    },
+    async (args) => {
+      let symbol;
+      if (args.symbol_id !== undefined || args.path !== undefined || args.name !== undefined) {
+        const found = findSymbol(ctx, args);
+        if (!found.ok) return text(found.message);
+        symbol = found.sym;
+      } else if (!args.snippet) {
+        return text('provide a symbol target (symbol_id / path+line / name) or a snippet');
+      }
+      const result = await findSimilar(ctx, {
+        ...(symbol ? { symbol } : {}),
+        ...(args.snippet ? { snippet: args.snippet } : {}),
+        k: args.k,
+        minSimilarity: args.min_similarity,
+        ...(args.lang ? { lang: args.lang as LanguageId } : {}),
+      });
+      if ('error' in result) return text(result.error);
+      const lines: string[] = [];
+      if (symbol) lines.push(`similar to ${symbol.kind} ${symbol.qualifiedName} (${symbol.path}:${symbol.startLine}):`, '');
+      if (result.hits.length === 0) {
+        lines.push('no similar code found above the similarity floor');
+      } else {
+        for (const h of result.hits) {
+          lines.push(`[${h.metric === 'cosine' ? 'cos' : 'jaccard'} ${h.score.toFixed(2)}] ${formatSymbolLine(h.symbol)}`);
+        }
+      }
+      if (result.note) lines.push('', `(${result.note})`);
       return text(clampText(lines.join('\n'), args.max_tokens));
     },
   );

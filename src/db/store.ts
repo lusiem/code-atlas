@@ -737,6 +737,34 @@ export class Store {
     txn();
   }
 
+  /** Stored vector for a symbol (its first embedded chunk), or null. */
+  vectorForSymbol(symbolId: number): Float32Array | null {
+    const row = this.db
+      .prepare(
+        `SELECT v.embedding FROM chunks c JOIN chunk_vectors v ON v.chunk_id = c.id
+         WHERE c.symbol_id = ? ORDER BY c.id LIMIT 1`,
+      )
+      .get(symbolId) as { embedding: Buffer } | undefined;
+    if (!row) return null;
+    return new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);
+  }
+
+  /** First chunk content for a symbol — the text its vector would embed. */
+  chunkContentForSymbol(symbolId: number): string | null {
+    const row = this.db
+      .prepare(`SELECT content FROM chunks WHERE symbol_id = ? ORDER BY id LIMIT 1`)
+      .get(symbolId) as { content: string } | undefined;
+    return row?.content ?? null;
+  }
+
+  /** Every chunk's content (for the shingle-similarity fallback). Caller caps workload. */
+  allChunks(lang?: LanguageId): Array<{ id: number; symbolId: number; content: string }> {
+    const join = lang ? `JOIN files f ON f.id = c.file_id WHERE f.lang = ?` : '';
+    return this.db
+      .prepare(`SELECT c.id, c.symbol_id AS symbolId, c.content FROM chunks c ${join}`)
+      .all(...(lang ? [lang] : [])) as Array<{ id: number; symbolId: number; content: string }>;
+  }
+
   /** Drop all vectors (model change) — chunks stay and re-embed under the new model. */
   resetEmbeddings(): void {
     const txn = this.db.transaction(() => {
