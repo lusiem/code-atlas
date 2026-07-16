@@ -45,6 +45,7 @@ describe('MCP server end-to-end', () => {
       'ast_query',
       'call_hierarchy',
       'change_impact',
+      'context_pack',
       'find_asset_references',
       'find_references',
       'find_route',

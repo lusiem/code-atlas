@@ -75,6 +75,15 @@ export class LspManager {
     return winner === 'timeout' ? null : winner;
   }
 
+  /** An already-running client for this language — never starts or waits for one. */
+  runningClientFor(lang: LanguageId): LspClient | null {
+    if (!this.opts.enabled) return null;
+    const entry = [...this.entries.values()].find((e) => e.spec.languages.includes(lang));
+    if (!entry?.client?.alive) return null;
+    this.touch(entry);
+    return entry.client;
+  }
+
   private async startEntry(entry: Entry): Promise<LspClient | null> {
     entry.state = 'starting';
     try {

@@ -94,6 +94,22 @@ export async function lspHoverFor(ctx: AppContext, sym: SymbolRow): Promise<stri
 }
 
 /**
+ * Hover via an already-running server only — never triggers a server start.
+ * For callers (context_pack) that enrich opportunistically and must not pay
+ * the start budget.
+ */
+export async function lspHoverIfRunning(ctx: AppContext, sym: SymbolRow): Promise<string | null> {
+  const client = ctx.lsp?.runningClientFor(sym.lang) ?? null;
+  if (!client) return null;
+  const pos = namePosition(ctx, sym);
+  if (!pos) return null;
+  const text = hoverText(await client.hover(sym.path, pos));
+  if (!text) return null;
+  const lines = text.split('\n');
+  return lines.length > 12 ? `${lines.slice(0, 12).join('\n')}\n…` : text;
+}
+
+/**
  * LSP call hierarchy rendered like the structural one; discovered edges are
  * cached into the index with provenance 'lsp', confidence 1.0.
  */

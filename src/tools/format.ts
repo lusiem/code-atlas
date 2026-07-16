@@ -49,6 +49,32 @@ export function formatSymbolLine(sym: SymbolRow, opts?: { includeDoc?: boolean }
   return line;
 }
 
+/**
+ * Hierarchical outline lines for a file's symbols: `line: kind signature #id`,
+ * indented by nesting. Shared by get_file_outline and context_pack.
+ */
+export function renderOutline(symbols: SymbolRow[], includeDocs = false): string[] {
+  const byId = new Map(symbols.map((s) => [s.id, s]));
+  const depthOf = (s: SymbolRow): number => {
+    let d = 0;
+    let cur = s;
+    let guard = 0;
+    while (cur.parentSymbolId !== null && guard++ < 32) {
+      const parent = byId.get(cur.parentSymbolId);
+      if (!parent) break;
+      d++;
+      cur = parent;
+    }
+    return d;
+  };
+  return symbols.map((s) => {
+    const indent = '  '.repeat(depthOf(s));
+    const sig = s.signature ?? s.name;
+    const doc = includeDocs && s.docComment ? `\n${indent}    ${s.docComment.split('\n')[0]}` : '';
+    return `${indent}${s.startLine}: ${kindPrefix(s)}${sig}${s.isExported ? '' : ' [private]'} #${s.id}${doc}`;
+  });
+}
+
 export function readSnippet(
   root: string,
   relPath: string,

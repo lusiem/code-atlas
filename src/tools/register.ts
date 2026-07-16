@@ -6,7 +6,7 @@ import { compileQuery, parse } from '../parsing/loader.js';
 import { semanticSearch } from '../embeddings/search.js';
 import { lspHoverFor } from '../lsp/overlay.js';
 import {
-  formatSymbolLine, kindPrefix, normalizeRel, paginationFooter, readSnippet, text,
+  formatSymbolLine, normalizeRel, paginationFooter, readSnippet, renderOutline, text,
 } from './format.js';
 import { clampText, maxTokensArg } from './tokens.js';
 import { registerAgentTools } from './agent.js';
@@ -15,6 +15,7 @@ import { registerEngineTools } from './engines.js';
 import { registerFrameworkTools } from './frameworks.js';
 import { registerGraphTools } from './graph.js';
 import { registerImpactTool } from './impact.js';
+import { registerPackTool } from './pack.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LANGUAGES } from '../languages.js';
@@ -35,6 +36,7 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
   registerEngineTools(server, ctx);
   registerDiagramTool(server, ctx);
   registerImpactTool(server, ctx);
+  registerPackTool(server, ctx);
   registerFrameworkTools(server, ctx);
 
   server.registerTool(
@@ -217,26 +219,7 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
       if (!file) return text(`file not indexed: ${rel} (is the path relative to ${ctx.config.root}?)`);
       const symbols = ctx.store.symbolsForFile(file.id);
       if (symbols.length === 0) return text(`${rel}: no symbols extracted`);
-
-      const byId = new Map(symbols.map((s) => [s.id, s]));
-      const depthOf = (s: SymbolRow): number => {
-        let d = 0;
-        let cur = s;
-        let guard = 0;
-        while (cur.parentSymbolId !== null && guard++ < 32) {
-          const parent = byId.get(cur.parentSymbolId);
-          if (!parent) break;
-          d++;
-          cur = parent;
-        }
-        return d;
-      };
-      const lines = symbols.map((s) => {
-        const indent = '  '.repeat(depthOf(s));
-        const sig = s.signature ?? s.name;
-        const doc = args.include_docs && s.docComment ? `\n${indent}    ${s.docComment.split('\n')[0]}` : '';
-        return `${indent}${s.startLine}: ${kindPrefix(s)}${sig}${s.isExported ? '' : ' [private]'} #${s.id}${doc}`;
-      });
+      const lines = renderOutline(symbols, args.include_docs);
       return text(`${rel} (${file.lang}, ${symbols.length} symbols)\n${lines.join('\n')}`);
     },
   );
