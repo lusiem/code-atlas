@@ -106,7 +106,10 @@ export interface FileExtraction {
 }
 
 /** Web frameworks with route extraction. Open set — stored as TEXT. */
-export type FrameworkId = 'express' | 'fastify' | 'nestjs' | 'fastapi' | 'flask' | 'django';
+export type FrameworkId =
+  | 'express' | 'fastify' | 'nestjs' | 'fastapi' | 'flask' | 'django'
+  // file-convention routing (extracted from paths, not source — see frameworks/fileroutes.ts)
+  | 'nextjs' | 'sveltekit' | 'nuxt' | 'remix';
 
 export interface ExtractedRoute {
   framework: FrameworkId;

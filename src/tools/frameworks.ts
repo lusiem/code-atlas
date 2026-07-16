@@ -5,7 +5,10 @@ import type { RouteRow } from '../types.js';
 import { formatSymbolLine, paginationFooter, text } from './format.js';
 import { clampText, maxTokensArg } from './tokens.js';
 
-const FRAMEWORK_VALUES = ['express', 'fastify', 'nestjs', 'fastapi', 'flask', 'django'] as const;
+const FRAMEWORK_VALUES = [
+  'express', 'fastify', 'nestjs', 'fastapi', 'flask', 'django',
+  'nextjs', 'sveltekit', 'nuxt', 'remix',
+] as const;
 
 function routeLine(ctx: AppContext, r: RouteRow): string {
   const shown = r.fullPath ?? r.path;
@@ -48,8 +51,8 @@ export function registerFrameworkTools(server: McpServer, ctx: AppContext): void
       title: 'List routes',
       description:
         'Web-framework routes indexed across the workspace (Express, Fastify, NestJS, FastAPI, Flask, ' +
-        'Django), one line per route with its handler symbol. Filter by framework, HTTP method, or a ' +
-        'path fragment.',
+        'Django, plus file-based routing for Next.js, SvelteKit, Nuxt, and Remix), one line per route ' +
+        'with its handler symbol. Filter by framework, HTTP method, or a path fragment.',
       inputSchema: {
         framework: z.enum(FRAMEWORK_VALUES).optional(),
         method: z.string().optional().describe('HTTP verb, e.g. GET'),
@@ -72,7 +75,8 @@ export function registerFrameworkTools(server: McpServer, ctx: AppContext): void
         if (total.length === 0) {
           return text(
             'no routes indexed — the workspace has no files importing a supported framework ' +
-              '(express, fastify, @nestjs/*, fastapi, flask, django urls.py)',
+              '(express, fastify, @nestjs/*, fastapi, flask, django urls.py) and no file-based ' +
+              'routing app (next/svelte/nuxt/remix config with app/pages/routes conventions)',
           );
         }
         return text('no routes match the given filters');

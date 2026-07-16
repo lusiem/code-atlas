@@ -14,6 +14,7 @@ import { affectedFilesFor, resolveWorkspace, type ResolveStats } from '../graph/
 import { isTestPath } from '../analysis/testish.js';
 import { frameworkForFile } from '../frameworks/detect.js';
 import { extractRoutes } from '../frameworks/registry.js';
+import { FileRouteDetector, extractFileRoutes, isMarkerPath } from '../frameworks/fileroutes.js';
 import { scanWorkspace } from './scanner.js';
 
 export interface IndexProgress {
@@ -62,11 +63,14 @@ export class Indexer {
   /** All index mutations run through this chain: sweeps and watch batches never overlap. */
   private chain: Promise<void> = Promise.resolve();
   private pendingSweep: Promise<void> | null = null;
+  private readonly fileRoutes: FileRouteDetector;
 
   constructor(
     private readonly config: AtlasConfig,
     private readonly store: Store,
-  ) {}
+  ) {
+    this.fileRoutes = new FileRouteDetector(config.root);
+  }
 
   /** Kick off (or join) a full incremental sweep: index changed files, drop deleted ones. */
   run(): Promise<void> {
@@ -114,6 +118,7 @@ export class Indexer {
     p.changedFiles = 0;
     p.removedFiles = 0;
     p.errors = [];
+    this.fileRoutes.invalidate();
 
     try {
       const { files: scanned, assets } = scanWorkspace(this.config);
@@ -169,6 +174,9 @@ export class Indexer {
     const prevState = p.state;
     p.state = 'indexing';
     const batch = this.newBatch();
+    // a framework config appearing/vanishing flips file-route detection; files
+    // indexed before the marker existed stay as-is until their next reindex
+    if (relPaths.some(isMarkerPath)) this.fileRoutes.invalidate();
 
     try {
       for (const rel of relPaths) {
@@ -275,7 +283,11 @@ export class Indexer {
     const extraction = await extractFile(extractor, source);
     const chunks = this.config.embeddings.enabled ? buildChunks(extraction, source, relPath) : [];
     const framework = frameworkForFile(lang, relPath, extraction.imports);
-    const routes = framework ? await extractRoutes(framework, lang, source) : [];
+    let routes = framework ? await extractRoutes(framework, lang, source) : [];
+    if (!framework) {
+      const app = this.fileRoutes.frameworkFor(relPath);
+      if (app) routes = extractFileRoutes(app, relPath, extraction);
+    }
     const fileId = this.store.replaceFile(
       { path: relPath, lang, hash, size, mtimeMs, isTest: isTestPath(relPath, lang) },
       extraction,

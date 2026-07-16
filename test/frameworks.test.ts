@@ -9,6 +9,7 @@ import { Store } from '../src/db/store.js';
 import { Indexer } from '../src/indexer/indexer.js';
 import { createServer } from '../src/server.js';
 import { frameworkForFile } from '../src/frameworks/detect.js';
+import { routeFileInfo } from '../src/frameworks/fileroutes.js';
 import { extractRoutes } from '../src/frameworks/registry.js';
 import { routePattern } from '../src/tools/frameworks.js';
 
@@ -243,5 +244,109 @@ describe('framework tools end-to-end', () => {
     const text = await callText('list_routes', { framework: 'fastapi' });
     expect(text).toContain('/items/feed');
     expect(text).not.toContain('/items/ws');
+  });
+});
+
+// ---------- file-based routing ----------
+
+describe('routeFileInfo path derivation', () => {
+  it('next.js app router', () => {
+    expect(routeFileInfo('nextjs', 'app/users/[id]/route.ts')).toEqual({ path: '/users/:id', shape: 'server' });
+    expect(routeFileInfo('nextjs', 'src/app/(marketing)/about/page.tsx')).toEqual({ path: '/about', shape: 'page' });
+    expect(routeFileInfo('nextjs', 'app/docs/[...slug]/page.tsx')).toEqual({ path: '/docs/*', shape: 'page' });
+    expect(routeFileInfo('nextjs', 'app/@modal/photo/page.tsx')).toEqual({ path: '/photo', shape: 'page' });
+    expect(routeFileInfo('nextjs', 'app/_private/page.tsx')).toBeNull();
+    expect(routeFileInfo('nextjs', 'app/users/layout.tsx')).toBeNull();
+  });
+
+  it('next.js pages router', () => {
+    expect(routeFileInfo('nextjs', 'pages/index.tsx')).toEqual({ path: '/', shape: 'page' });
+    expect(routeFileInfo('nextjs', 'pages/blog/[slug].tsx')).toEqual({ path: '/blog/:slug', shape: 'page' });
+    expect(routeFileInfo('nextjs', 'pages/api/users/[id].ts')).toEqual({ path: '/api/users/:id', shape: 'api' });
+    expect(routeFileInfo('nextjs', 'pages/_app.tsx')).toBeNull();
+  });
+
+  it('sveltekit', () => {
+    expect(routeFileInfo('sveltekit', 'src/routes/+page.svelte')).toEqual({ path: '/', shape: 'page' });
+    expect(routeFileInfo('sveltekit', 'src/routes/blog/[slug]/+page.svelte')).toEqual({ path: '/blog/:slug', shape: 'page' });
+    expect(routeFileInfo('sveltekit', 'src/routes/api/items/+server.ts')).toEqual({ path: '/api/items', shape: 'server' });
+    expect(routeFileInfo('sveltekit', 'src/routes/(app)/dash/+page.svelte')).toEqual({ path: '/dash', shape: 'page' });
+    expect(routeFileInfo('sveltekit', 'src/routes/docs/[...rest]/+page.svelte')).toEqual({ path: '/docs/*', shape: 'page' });
+    expect(routeFileInfo('sveltekit', 'src/routes/opt/[[lang]]/+page.svelte')).toEqual({ path: '/opt/:lang?', shape: 'page' });
+    expect(routeFileInfo('sveltekit', 'src/routes/+layout.svelte')).toBeNull();
+  });
+
+  it('nuxt', () => {
+    expect(routeFileInfo('nuxt', 'pages/index.vue')).toEqual({ path: '/', shape: 'page' });
+    expect(routeFileInfo('nuxt', 'pages/users/[id].vue')).toEqual({ path: '/users/:id', shape: 'page' });
+    expect(routeFileInfo('nuxt', 'pages/[...slug].vue')).toEqual({ path: '/*', shape: 'page' });
+    expect(routeFileInfo('nuxt', 'server/api/users.get.ts')).toEqual({ path: '/api/users', shape: 'api', method: 'GET' });
+    expect(routeFileInfo('nuxt', 'server/api/users/[id].ts')).toEqual({ path: '/api/users/:id', shape: 'api' });
+    expect(routeFileInfo('nuxt', 'server/routes/health.ts')).toEqual({ path: '/health', shape: 'api' });
+  });
+
+  it('remix flat routes', () => {
+    expect(routeFileInfo('remix', 'app/routes/_index.tsx')).toEqual({ path: '/', shape: 'page' });
+    expect(routeFileInfo('remix', 'app/routes/concerts.$city.tsx')).toEqual({ path: '/concerts/:city', shape: 'page' });
+    expect(routeFileInfo('remix', 'app/routes/_auth.login.tsx')).toEqual({ path: '/login', shape: 'page' });
+    expect(routeFileInfo('remix', 'app/routes/files.$.tsx')).toEqual({ path: '/files/*', shape: 'page' });
+    expect(routeFileInfo('remix', 'app/routes/docs.($lang).intro.tsx')).toEqual({ path: '/docs/:lang?/intro', shape: 'page' });
+    expect(routeFileInfo('remix', 'app/routes/concerts.$city/route.tsx')).toEqual({ path: '/concerts/:city', shape: 'page' });
+    expect(routeFileInfo('remix', 'app/styles.css')).toBeNull();
+  });
+});
+
+describe('file-based routing end-to-end (next.js)', () => {
+  let nextRoot: string;
+  let nextStore: Store;
+  let nextClient: Client;
+
+  beforeAll(async () => {
+    nextRoot = mkdtempSync(join(tmpdir(), 'atlas-next-'));
+    writeFileSync(join(nextRoot, 'next.config.js'), 'module.exports = {};\n');
+    mkdirSync(join(nextRoot, 'app', 'users', '[id]'), { recursive: true });
+    writeFileSync(
+      join(nextRoot, 'app', 'users', '[id]', 'route.ts'),
+      'export async function GET(req: Request): Promise<Response> {\n  return new Response(\'user\');\n}\n' +
+        'export async function DELETE(req: Request): Promise<Response> {\n  return new Response(\'gone\');\n}\n',
+    );
+    mkdirSync(join(nextRoot, 'app', 'about'), { recursive: true });
+    writeFileSync(
+      join(nextRoot, 'app', 'about', 'page.tsx'),
+      'export default function AboutPage(): null {\n  return null;\n}\n',
+    );
+
+    const config = loadConfig(nextRoot);
+    nextStore = new Store(':memory:');
+    const indexer = new Indexer(config, nextStore);
+    await indexer.run();
+    const server = createServer({ config, store: nextStore, indexer });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    nextClient = new Client({ name: 'test-client', version: '0.0.0' });
+    await Promise.all([server.connect(st), nextClient.connect(ct)]);
+  });
+
+  afterAll(() => {
+    nextStore?.close();
+    rmSync(nextRoot, { recursive: true, force: true });
+  });
+
+  async function callNext(name: string, args: Record<string, unknown> = {}): Promise<string> {
+    const result = await nextClient.callTool({ name, arguments: args });
+    const content = result.content as Array<{ type: string; text: string }>;
+    return content.map((c) => c.text).join('\n');
+  }
+
+  it('indexes verb exports as routes with resolved handlers', async () => {
+    const text = await callNext('list_routes', { framework: 'nextjs' });
+    expect(text).toContain('GET    /users/:id');
+    expect(text).toContain('DELETE /users/:id');
+    expect(text).toContain('GET    /about');
+  });
+
+  it('find_route resolves a concrete URL to the verb export', async () => {
+    const text = await callNext('find_route', { url: 'GET /users/7' });
+    expect(text).toContain('/users/:id');
+    expect(text).toMatch(/function GET|"GET"/);
   });
 });

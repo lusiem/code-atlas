@@ -29,5 +29,12 @@ export function extractRoutes(
       return extractFlaskRoutes(source);
     case 'django':
       return extractDjangoRoutes(source);
+    case 'nextjs':
+    case 'sveltekit':
+    case 'nuxt':
+    case 'remix':
+      // file-convention frameworks: routes come from paths via
+      // frameworks/fileroutes.ts in the indexer, never from source
+      return Promise.resolve([]);
   }
 }
