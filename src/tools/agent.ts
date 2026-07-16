@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { AppContext } from '../context.js';
 import { testsForSymbol } from '../analysis/tests-for.js';
+import { verifyChanges } from '../analysis/verify.js';
 import { formatSymbolLine, text } from './format.js';
 import { findSymbol, symbolArgs } from './graph.js';
 import { clampText, maxTokensArg } from './tokens.js';
@@ -64,6 +65,36 @@ export function registerAgentTools(server: McpServer, ctx: AppContext): void {
       }
       const omitted = result.hits.length - direct.length - viaImports.length;
       if (omitted > 0) lines.push(`(+${omitted} more — raise limit)`);
+      return text(clampText(lines.join('\n'), args.max_tokens));
+    },
+  );
+
+  server.registerTool(
+    'verify_changes',
+    {
+      title: 'Verify changes',
+      description:
+        'Post-edit structural check of the uncommitted working tree (or explicit files) against git HEAD: ' +
+        'imports that stopped resolving, removed exports that other files still reference, and signature ' +
+        'changes with live callers. change_impact predicts blast radius before an edit; this confirms what ' +
+        'actually broke after. Waits for the index to catch up with the edits before answering.',
+      inputSchema: {
+        files: z.array(z.string()).optional()
+          .describe('changed files to check (workspace-relative); omitted = uncommitted git diff'),
+        ...maxTokensArg,
+      },
+    },
+    async (args) => {
+      const result = await verifyChanges(ctx, args.files);
+      if ('error' in result) return text(result.error);
+      const lines: string[] = [result.summary];
+      for (const n of result.notes) lines.push(`note: ${n}`);
+      if (result.findings.length === 0) {
+        lines.push('', 'no structural breakage found (structural index — behavior changes and dynamic references are invisible; run the tests)');
+      } else {
+        lines.push('');
+        for (const f of result.findings) lines.push(`${f.severity} ${f.message}`);
+      }
       return text(clampText(lines.join('\n'), args.max_tokens));
     },
   );

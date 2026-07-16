@@ -85,6 +85,13 @@ export async function uncommittedChanges(root: string): Promise<GitResult> {
   return { ok: true, changes };
 }
 
+/** File content at HEAD, or null when it didn't exist there (or git is unavailable). */
+export async function showAtHead(root: string, path: string): Promise<string | null> {
+  // `:./` makes the path relative to -C's directory even when root is not the repo root
+  const res = await git(root, ['show', `HEAD:./${path}`]);
+  return res.ok ? res.out : null;
+}
+
 /** New-side ranges from `@@ -a,b +c,d @@` headers. Pure-deletion hunks get count 0. */
 export function parseHunkRanges(diffText: string): Array<{ start: number; count: number }> {
   const ranges: Array<{ start: number; count: number }> = [];

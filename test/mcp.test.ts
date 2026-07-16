@@ -64,6 +64,7 @@ describe('MCP server end-to-end', () => {
       'tests_for_symbol',
       'trace_path',
       'type_hierarchy',
+      'verify_changes',
     ]);
   });
 

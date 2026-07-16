@@ -610,6 +610,25 @@ export class Store {
       .all(symbolId, name, limit, offset) as ReferenceRow[];
   }
 
+  /**
+   * Unresolved occurrences of a name outside one file — the damage sites left
+   * behind when a definition of that name is removed.
+   */
+  unresolvedOccurrencesOfName(
+    name: string,
+    excludeFileId: number | null,
+    limit = 20,
+  ): Array<{ path: string; startLine: number; role: string }> {
+    return this.db
+      .prepare(
+        `SELECT f.path, o.start_line AS startLine, o.role
+         FROM occurrences o JOIN files f ON f.id = o.file_id
+         WHERE o.name = ? AND o.resolved_symbol_id IS NULL AND o.file_id != ?
+         ORDER BY f.path, o.start_line LIMIT ?`,
+      )
+      .all(name, excludeFileId ?? -1, limit) as Array<{ path: string; startLine: number; role: string }>;
+  }
+
   /** Outgoing (srcSymbolId=from) or incoming (dstSymbolId=from) edges with symbol info. */
   edgesFor(symbolId: number, direction: 'out' | 'in', kinds: EdgeKind[]): EdgeRow[] {
     const joinCol = direction === 'out' ? 'e.dst_symbol_id' : 'e.src_symbol_id';
