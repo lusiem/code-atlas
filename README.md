@@ -4,7 +4,7 @@
 
 Instead of grepping and reading whole files, the model asks questions like *"outline this file"*, *"who calls `parseConfig`?"*, *"how does the request handler reach the DB layer?"* — and gets compact, token-efficient answers backed by a persistent tree-sitter index.
 
-> **Status: pre-release.** All roadmap phases below are complete — 12 languages, LSP-exact answers with a structural floor, and engine adapters. npm publish is next.
+> **Status: released** (npm `@lusiem/code-atlas`, MCP registry `io.github.lusiem/code-atlas`). 25 languages, 29 tools, LSP-exact answers with a structural floor, engine adapters, and an agent-workflow layer (`context_pack`, `verify_changes`) built for token economy.
 
 ## How it works
 
@@ -55,6 +55,8 @@ Full reference with example outputs: [docs/tools.md](docs/tools.md).
 | `semantic_search` | *"Where is retry backoff implemented?"* — natural-language search, hybrid keyword+embedding ranking, fully local. |
 | `get_file_outline` | What's in this file? Hierarchical signatures without reading source. |
 | `get_symbol_info` | Everything about one symbol (by id, position, or name) incl. docs and source. |
+| `context_pack` | One-call, token-budgeted briefing on a symbol: source, outline, callers/callees, types, route, related tests — instead of six lookups. Sections that don't fit the budget are named. |
+| `batch_symbols` | Up to 50 `#id`s resolved to compact one-liners in a single call. |
 | `ast_query` | Raw tree-sitter S-expression queries — structural search regex can't do. |
 | `find_references` | Who uses this symbol? Exact (LSP) when available, else resolved usages first, name-matches as candidates. |
 | `go_to_definition` | Definition of the identifier at a position. LSP-exact with index fallback. |
@@ -63,7 +65,12 @@ Full reference with example outputs: [docs/tools.md](docs/tools.md).
 | `get_dependencies` | File import graph, both directions (imports / imported-by). |
 | `trace_path` | Shortest call chain between two symbols. |
 | `change_impact` | Blast radius of a change: transitive callers + import reachability, affected **test files** first. Target a symbol, a file list, or nothing — no args analyzes the uncommitted git diff (hunk-level: only symbols you actually touched seed the traversal). Affected route handlers are tagged `[ROUTE GET /users/:id]`. |
-| `list_routes` | Web-framework routes across the workspace — Express, Fastify, NestJS, FastAPI, Flask, Django — each linked to its handler symbol. |
+| `verify_changes` | Post-edit structural check against git HEAD: imports that stopped resolving, removed exports other files still reference, signature changes with live callers. `change_impact` predicts; this confirms. |
+| `tests_for_symbol` | Which tests exercise this symbol? Reverse graph walk to test files, naming the test case; import-chain-only hits reported as a weaker signal. |
+| `find_similar_code` | *"Does a helper for this already exist?"* — near-duplicate search over the local embedding vectors, with a text-similarity fallback while coverage builds. |
+| `find_dead_code` | Zero-reference symbols after entry-point/route/lifecycle exclusions, confidence-hedged (`possibly dead` when a same-name usage exists anywhere); unused exports listed separately. |
+| `hotspots` | Churn × size risk ranking from one `git log --numstat` pass. |
+| `list_routes` | Web-framework routes across the workspace — Express, Fastify, NestJS, FastAPI, Flask, Django, plus file-based routing for Next.js, SvelteKit, Nuxt, and Remix — each linked to its handler symbol. |
 | `find_route` | *"Which code serves `GET /api/users/7`?"* — matches a concrete URL against indexed route patterns (`:id`, `{id}`, `<int:pk>` are wildcards) and returns the handler. |
 | `generate_diagram` | Mermaid diagrams of the above graphs: import graph (file or directory level), call graph around a symbol, type hierarchy, call path — paste straight into GitHub markdown or docs. |
 | `get_scene_structure` | Godot scene node tree with attached scripts, instanced sub-scenes, and signal connections (handlers resolved to symbols). |
@@ -132,6 +139,7 @@ Blueprints, `.scn`) are out of scope by design.
 6. ~~Game-engine adapters: GDScript grammar (vendored wasm build), Godot scenes/autoloads, Unity prefabs/GUIDs, Unreal module graph + reflection search, Godot editor LSP attach (TCP 6005, nightly-tested against a real editor)~~ ✅
 7. ~~Docs, benchmarks in CI (cold index 157k LOC ≈ 5 s, warm queries p95 < 10 ms), cross-platform CI, npm pack smoke~~ ✅ — npm publish + MCP registry submission pending
 8. ~~Competitive push: `change_impact` (blast radius + affected tests, git-diff mode), web-framework route indexing (`list_routes`/`find_route`), 13 more languages incl. Vue/Svelte SFCs~~ ✅
+9. ~~Agent-workflow release (0.4.0): `context_pack` (token-budgeted one-call briefings), `verify_changes` (post-edit check vs git HEAD), `tests_for_symbol`, `find_similar_code`, `find_dead_code` + `hotspots`, `batch_symbols`, `max_tokens` on every list-shaped tool, file-based routing (Next.js/SvelteKit/Nuxt/Remix), PHP PSR-4 / C# namespace / Swift SPM import resolution, opt-in LSP edge promotion, sqlite-vec vec0 KNN~~ ✅
 
 Performance (vuejs/core, 157k LOC, 536 files incl. `.vue` SFCs): cold index **3.8 s**, warm tool
 calls **p95 ≤ 6 ms** through a full MCP round-trip. `scripts/bench.mjs` runs in CI.

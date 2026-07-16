@@ -9,6 +9,10 @@ Symbols carry stable ids (`#N`) usable wherever a tool accepts `symbol_id`. Prov
 explicit everywhere: `(lsp)` / `[lsp 1.00]` means a language server answered; `(resolved 0.85)`
 / `[index 0.70]` is heuristic structural resolution with its confidence.
 
+List-shaped tools accept `max_tokens` (default 2500): output is clamped to whole lines under
+the budget and a truncation footer says how to get the rest. `batch_symbols` resolves up to
+50 `#N` ids in one call.
+
 ## Navigation & symbols
 
 ### `project_overview`
@@ -138,6 +142,60 @@ flowchart LR
   class n0 focus
 ```
 ````
+
+## Agent workflow
+
+### `context_pack` — `{symbol_id | path+line | name, task?, max_tokens?}`
+One call, one briefing: header + signature + docs, definition source, the rest of the file's
+outline, type context (LSP hover if a server is already running), top callers and callees,
+route (if a handler), related tests, and — given a `task` string — possibly relevant symbols.
+Sections are included in priority order until the token budget (default 4000) is spent; what
+didn't fit is named in an `omitted:` footer so you can ask for it specifically.
+
+### `verify_changes` — `{files?, max_tokens?}`
+Post-edit structural check of the uncommitted working tree against git HEAD (the HEAD blob is
+re-extracted per changed file — no snapshots). Waits for the index to catch up first.
+```
+verified 3 changed file(s) against HEAD: 1 broken, 1 to check, 0 informational
+
+BROKEN src/lib.ts: exported function add was removed and is still referenced — src/calc.ts:1 (import), src/calc.ts:3 (call)
+CHECK src/api.ts: signature of function fetchUser changed
+  old: function fetchUser(id: string): User
+  new: function fetchUser(id: string, opts: FetchOpts): User
+  callers: loadProfile (src/profile.ts:14)
+```
+`change_impact` predicts breakage before an edit; this confirms what actually broke after.
+
+### `tests_for_symbol` — `{symbol_id | path+line | name, max_depth?, min_confidence?}`
+Which tests exercise this symbol? Reverse walk over call/type edges to test files (names the
+test-case symbol, its depth, and the edge route), plus test files that only reach it through
+imports, reported separately as a weaker signal.
+
+### `find_similar_code` — `{symbol_id | path+line | name | snippet, k?, min_similarity?}`
+"Does a helper for this already exist?" Cosine over the local embedding vectors when ready
+(`[cos 0.91]`), degrading to token-shingle text similarity (`[jaccard 0.42]`, labeled as the
+weaker signal) while embedding coverage builds.
+
+### `batch_symbols` — `{symbol_ids[], include_source?}`
+Compact one-line info (plus optional 20-line snippets) for up to 50 ids — resolve a screenful
+of `#N` references from call_hierarchy / change_impact / find_dead_code output in one call.
+
+## Health
+
+### `find_dead_code` — `{lang?, path_prefix?, include_exports?}`
+Symbols with zero incoming references after excluding entry points, route handlers, and
+engine/framework lifecycle callbacks. Every claim is hedged: `dead (high confidence)` means no
+same-name usage exists anywhere; `possibly dead — N same-name usage(s)` flags dynamic-dispatch
+risk. Test-only helpers and internal-only exports are bucketed separately. A structural index
+cannot see reflection, DI, or external consumers — treat this as a review list.
+
+### `hotspots` — `{since?, path_prefix?}`
+Churn-ranked files from one `git log --numstat` pass: `score = commits × log2(lines)`.
+```
+hotspots over the last 90 days (30 commits scanned):
+src/db/store.ts        12 commits  +1165/-15  ~1262 lines  score 124
+src/tools/register.ts  14 commits  +406/-54   ~354 lines   score 119
+```
 
 ## Game engines
 

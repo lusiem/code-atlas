@@ -6,6 +6,7 @@ import type { AppContext } from '../context.js';
 import { assetForPath } from '../engines/detect.js';
 import { parseScene, type SceneNode } from '../engines/godot.js';
 import { normalizeRel, text } from './format.js';
+import { clampText, maxTokensArg } from './tokens.js';
 
 /** Depth of a node from its `parent` attribute ('' root, '.' root child, 'A/B' deeper). */
 function depthOf(node: SceneNode): number {
@@ -34,6 +35,7 @@ export function registerEngineTools(server: McpServer, ctx: AppContext): void {
         'signal connections. Supports Godot .tscn/.tres today (Unity prefabs planned).',
       inputSchema: {
         path: z.string().describe('scene file path, relative to the workspace root'),
+        ...maxTokensArg,
       },
     },
     async (args) => {
@@ -69,7 +71,7 @@ export function registerEngineTools(server: McpServer, ctx: AppContext): void {
           );
         }
       }
-      return text(lines.join('\n'));
+      return text(clampText(lines.join('\n'), args.max_tokens));
     },
   );
 
@@ -83,6 +85,7 @@ export function registerEngineTools(server: McpServer, ctx: AppContext): void {
         'or a bare method/class name.',
       inputSchema: {
         target: z.string().describe('e.g. "player.gd", "res://player.gd", or "_on_body_entered"'),
+        ...maxTokensArg,
       },
     },
     async (args) => {
@@ -122,7 +125,7 @@ export function registerEngineTools(server: McpServer, ctx: AppContext): void {
         const target = resolved ? `${resolved} (guid ${r.target.slice(0, 8)}…)` : r.target;
         return `${r.path} (${r.engine} ${r.kind})  ${r.targetKind}: ${target}${r.detail ? `  — ${r.detail}` : ''}`;
       });
-      return text(lines.join('\n'));
+      return text(clampText(lines.join('\n'), args.max_tokens));
     },
   );
 
@@ -141,6 +144,7 @@ export function registerEngineTools(server: McpServer, ctx: AppContext): void {
           .min(2)
           .describe('marker to search: "BlueprintCallable", "UPROPERTY", "[SerializeField]", "@export", "signal"'),
         limit: z.number().int().min(1).max(200).default(50),
+        ...maxTokensArg,
       },
     },
     async (args) => {
@@ -177,7 +181,7 @@ export function registerEngineTools(server: McpServer, ctx: AppContext): void {
 
       if (lines.length === 0) return text(`no reflection markers matching "${spec}"`);
       const footer = lines.length >= args.limit ? `\n(hit limit=${args.limit})` : '';
-      return text(lines.join('\n') + footer);
+      return text(clampText(lines.join('\n') + footer, args.max_tokens));
     },
   );
 }

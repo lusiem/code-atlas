@@ -289,6 +289,41 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
   );
 
   server.registerTool(
+    'batch_symbols',
+    {
+      title: 'Batch symbol lookup',
+      description:
+        'Compact one-line info for up to 50 symbol ids in a single call — resolve the #ids from ' +
+        'call_hierarchy / change_impact / find_dead_code output without one get_symbol_info round ' +
+        'trip each. Set include_source for the definition snippets too.',
+      inputSchema: {
+        symbol_ids: z.array(z.number().int()).min(1).max(50),
+        include_source: z.boolean().default(false).describe('append each definition (up to 20 lines)'),
+        ...maxTokensArg,
+      },
+    },
+    async (args) => {
+      const lines: string[] = [];
+      for (const id of args.symbol_ids) {
+        const sym = ctx.store.getSymbolById(id);
+        if (!sym) {
+          lines.push(`#${id}: no such symbol`);
+          continue;
+        }
+        lines.push(formatSymbolLine(sym, { includeDoc: true }));
+        if (args.include_source) {
+          try {
+            lines.push(readSnippet(ctx.config.root, sym.path, sym.startLine, sym.endLine, 20), '');
+          } catch {
+            lines.push('    (source unreadable)', '');
+          }
+        }
+      }
+      return text(clampText(lines.join('\n'), args.max_tokens));
+    },
+  );
+
+  server.registerTool(
     'ast_query',
     {
       title: 'AST pattern query',

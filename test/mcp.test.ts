@@ -43,6 +43,7 @@ describe('MCP server end-to-end', () => {
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'ast_query',
+      'batch_symbols',
       'call_hierarchy',
       'change_impact',
       'context_pack',
@@ -236,6 +237,14 @@ describe('MCP server end-to-end', () => {
   it('generate_diagram reports missing symbols gracefully', async () => {
     const text = await callText('generate_diagram', { kind: 'calls', name: 'doesNotExist' });
     expect(text).toContain('no symbol named "doesNotExist"');
+  });
+
+  it('batch_symbols resolves many ids in one call', async () => {
+    const listing = await callText('search_symbols', { query: 'add' });
+    const ids = [...listing.matchAll(/#(\d+)/g)].map((m) => Number(m[1]));
+    const text = await callText('batch_symbols', { symbol_ids: [...ids.slice(0, 2), 999999] });
+    expect(text).toContain('function add');
+    expect(text).toContain('#999999: no such symbol');
   });
 
   it('max_tokens truncates oversized output with a footer', async () => {
