@@ -2,15 +2,28 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { AppContext } from '../context.js';
 import type { EdgeKind } from '../types.js';
-import { emptyGraphNote } from './format.js';
+import { emptyGraphNote, text } from './format.js';
 import { CALL_KINDS, TYPE_KINDS, findSymbol, shortestCallPath, symbolArgs } from './graph.js';
+import { clampToBudget, maxTokensArg } from './tokens.js';
 
-function text(s: string) {
-  return { content: [{ type: 'text' as const, text: s }] };
-}
-
-function fence(header: string, body: string[], note?: string): ReturnType<typeof text> {
-  const parts = [header, '', '```mermaid', ...body, '```'];
+function fence(
+  header: string,
+  body: string[],
+  note?: string,
+  maxTokens?: number,
+): ReturnType<typeof text> {
+  // clamp whole diagram lines only — node declarations precede edges in every
+  // renderer, so a cut from the end drops edges, never dangling references
+  let shownBody = body;
+  if (maxTokens !== undefined) {
+    const clamped = clampToBudget(body, maxTokens);
+    if (clamped.omittedLines > 0) {
+      shownBody = clamped.text.split('\n');
+      const cut = `(diagram truncated: ${clamped.omittedLines} lines over max_tokens=${maxTokens} — lower depth/max_nodes or raise max_tokens)`;
+      note = note ? `${note}\n${cut}` : cut;
+    }
+  }
+  const parts = [header, '', '```mermaid', ...shownBody, '```'];
   if (note) parts.push('', note);
   return text(parts.join('\n'));
 }
@@ -152,6 +165,7 @@ function renderImports(
   pathPrefix: string | null,
   granularity: 'auto' | 'file' | 'dir',
   maxNodes: number,
+  maxTokens: number,
 ): ReturnType<typeof text> {
   let pairs = ctx.store.importPairs();
   if (pathPrefix) {
@@ -168,7 +182,7 @@ function renderImports(
     filesInvolved.add(p.dst);
   }
   const useDirs = granularity === 'dir' || (granularity === 'auto' && filesInvolved.size > maxNodes);
-  if (useDirs) return renderImportsByDir(pairs, scope, maxNodes);
+  if (useDirs) return renderImportsByDir(pairs, scope, maxNodes, maxTokens);
 
   // file level: one node per file, clustered into a subgraph per directory
   const byDir = new Map<string, string[]>();
@@ -203,13 +217,14 @@ function renderImports(
   const note = truncated
     ? `(truncated at max_nodes=${maxNodes} files — narrow with path_prefix, or use granularity=dir for the full picture)`
     : undefined;
-  return fence(`import graph${scope}, file level:`, lines, note);
+  return fence(`import graph${scope}, file level:`, lines, note, maxTokens);
 }
 
 function renderImportsByDir(
   pairs: Array<{ src: string; dst: string }>,
   scope: string,
   maxNodes: number,
+  maxTokens: number,
 ): ReturnType<typeof text> {
   // collapse to directory level, weighting edges by distinct file pairs
   const weights = new Map<string, { src: string; dst: string; n: number }>();
@@ -252,6 +267,7 @@ function renderImportsByDir(
     `import graph${scope}, directory level (edge label = number of file-to-file imports):`,
     ['flowchart LR', ...declLines, ...edgeLines],
     note,
+    maxTokens,
   );
 }
 
@@ -290,6 +306,7 @@ export function registerDiagramTool(server: McpServer, ctx: AppContext): void {
         to_name: z.string().optional(),
         max_depth: z.number().int().min(1).max(10).default(6).describe('call_path: maximum hops'),
         max_nodes: z.number().int().min(10).max(300).default(80),
+        ...maxTokensArg,
       },
     },
     async (args) => {
@@ -300,6 +317,7 @@ export function registerDiagramTool(server: McpServer, ctx: AppContext): void {
             args.path_prefix ? args.path_prefix.replace(/\\/g, '/').replace(/^\.\//, '') : null,
             args.granularity,
             args.max_nodes,
+            args.max_tokens,
           );
 
         case 'calls':
@@ -329,7 +347,7 @@ export function registerDiagramTool(server: McpServer, ctx: AppContext): void {
           const note = truncated
             ? `(truncated at max_nodes=${args.max_nodes} — lower depth or raise max_nodes)`
             : undefined;
-          return fence(header, body, note);
+          return fence(header, body, note, args.max_tokens);
         }
 
         case 'call_path': {
@@ -356,6 +374,8 @@ export function registerDiagramTool(server: McpServer, ctx: AppContext): void {
           return fence(
             `call path ${from.sym.qualifiedName} -> ${to.sym.qualifiedName} (${chain.length - 1} hops):`,
             lines,
+            undefined,
+            args.max_tokens,
           );
         }
       }

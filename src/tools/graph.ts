@@ -1,22 +1,10 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { relative, sep } from 'node:path';
 import type { AppContext } from '../context.js';
 import type { EdgeKind, SymbolRow } from '../types.js';
 import { lspCallHierarchy, lspReferences, relFromUri } from '../lsp/overlay.js';
-import { emptyGraphNote, formatSymbolLine, paginationFooter } from './format.js';
-
-function text(s: string) {
-  return { content: [{ type: 'text' as const, text: s }] };
-}
-
-function normalizeRel(ctx: AppContext, p: string): string {
-  const withSlashes = p.replace(/\\/g, '/');
-  const rel = /^[a-zA-Z]:\//.test(withSlashes) || withSlashes.startsWith('/')
-    ? relative(ctx.config.root, p).split(sep).join('/')
-    : withSlashes;
-  return rel.replace(/^\.\//, '');
-}
+import { emptyGraphNote, formatSymbolLine, normalizeRel, paginationFooter, text } from './format.js';
+import { clampText, maxTokensArg } from './tokens.js';
 
 /** Shared `symbol_id | path+line | name` target schema for graph tools. */
 export const symbolArgs = {
@@ -159,6 +147,7 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
         role: z.enum(['ref', 'call', 'write', 'import']).optional().describe('only usages of this kind'),
         limit: z.number().int().min(1).max(500).default(50),
         offset: z.number().int().min(0).default(0),
+        ...maxTokensArg,
       },
     },
     async (args) => {
@@ -175,9 +164,10 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
       if (precise && precise.length > 0) {
         const shown = precise.slice(args.offset, args.offset + args.limit);
         for (const r of shown) lines.push(`${r.path}:${r.line}:${r.col} (lsp)`);
-        return text(
+        return text(clampText(
           lines.join('\n') + paginationFooter(shown.length, args.limit, args.offset),
-        );
+          args.max_tokens,
+        ));
       }
 
       let refs = ctx.store.referencesTo(sym.id, sym.name, args.limit + 1, args.offset);
@@ -194,7 +184,10 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
             : 'name match only';
         lines.push(`${r.path}:${r.startLine}:${r.startCol} ${r.role} (${status})`);
       }
-      return text(lines.join('\n') + paginationFooter(shown.length, args.limit, args.offset));
+      return text(clampText(
+        lines.join('\n') + paginationFooter(shown.length, args.limit, args.offset),
+        args.max_tokens,
+      ));
     },
   );
 
@@ -210,6 +203,7 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
         ...symbolArgs,
         direction: z.enum(['in', 'out']).default('in'),
         depth: z.number().int().min(1).max(3).default(2),
+        ...maxTokensArg,
       },
     },
     async (args) => {
@@ -220,11 +214,13 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
       const header = `${args.direction === 'in' ? 'callers of' : 'calls from'} ${sym.kind} ${sym.qualifiedName} (${sym.path}:${sym.startLine}) #${sym.id}`;
 
       const precise = await lspCallHierarchy(ctx, sym, direction, args.depth, 25);
-      if (precise && precise.length > 0) return text(`${header}\n${precise.join('\n')}`);
+      if (precise && precise.length > 0) {
+        return text(clampText(`${header}\n${precise.join('\n')}`, args.max_tokens));
+      }
 
       const lines = renderHierarchy(ctx, sym.id, direction, CALL_KINDS, args.depth, 25);
       if (lines.length === 0) return text(`${header}\n${emptyGraphNote(sym, 'calls', direction)}`);
-      return text(`${header}\n${lines.join('\n')}`);
+      return text(clampText(`${header}\n${lines.join('\n')}`, args.max_tokens));
     },
   );
 
@@ -290,6 +286,7 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
         ...symbolArgs,
         direction: z.enum(['super', 'sub']).default('sub'),
         depth: z.number().int().min(1).max(5).default(3),
+        ...maxTokensArg,
       },
     },
     async (args) => {
@@ -300,7 +297,7 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
       const lines = renderHierarchy(ctx, sym.id, dir, TYPE_KINDS, args.depth, 50);
       const header = `${args.direction === 'super' ? 'supertypes of' : 'subtypes of'} ${sym.kind} ${sym.qualifiedName} (${sym.path}:${sym.startLine}) #${sym.id}`;
       if (lines.length === 0) return text(`${header}\n${emptyGraphNote(sym, 'types', dir)}`);
-      return text(`${header}\n${lines.join('\n')}`);
+      return text(clampText(`${header}\n${lines.join('\n')}`, args.max_tokens));
     },
   );
 
@@ -314,6 +311,7 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
       inputSchema: {
         path: z.string().describe('file path, relative to the workspace root'),
         direction: z.enum(['out', 'in']).default('out'),
+        ...maxTokensArg,
       },
     },
     async (args) => {
@@ -326,12 +324,12 @@ export function registerGraphTools(server: McpServer, ctx: AppContext): void {
         const lines = deps.map(
           (d) => `${rel}:${d.startLine}  ${d.specifier}  ->  ${d.resolvedPath ?? '(external)'}`,
         );
-        return text(`imports of ${rel}:\n${lines.join('\n')}`);
+        return text(clampText(`imports of ${rel}:\n${lines.join('\n')}`, args.max_tokens));
       }
       const dependents = ctx.store.dependentsOf(file.id);
       if (dependents.length === 0) return text(`${rel}: no files in the workspace import it`);
       const lines = dependents.map((d) => `${d.path}:${d.startLine}  (as "${d.specifier}")`);
-      return text(`files importing ${rel}:\n${lines.join('\n')}`);
+      return text(clampText(`files importing ${rel}:\n${lines.join('\n')}`, args.max_tokens));
     },
   );
 

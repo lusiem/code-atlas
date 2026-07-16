@@ -1,12 +1,14 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { relative, sep } from 'node:path';
 import type { AppContext } from '../context.js';
 import { extractorFor, supportedLanguages } from '../parsing/registry.js';
 import { compileQuery, parse } from '../parsing/loader.js';
 import { semanticSearch } from '../embeddings/search.js';
 import { lspHoverFor } from '../lsp/overlay.js';
-import { formatSymbolLine, kindPrefix, paginationFooter, readSnippet } from './format.js';
+import {
+  formatSymbolLine, kindPrefix, normalizeRel, paginationFooter, readSnippet, text,
+} from './format.js';
+import { clampText, maxTokensArg } from './tokens.js';
 import { registerDiagramTool } from './diagram.js';
 import { registerEngineTools } from './engines.js';
 import { registerFrameworkTools } from './frameworks.js';
@@ -25,19 +27,6 @@ const KIND_VALUES = [
 
 // derived from the language registry so new languages are filterable for free
 const LANG_VALUES = LANGUAGES.map((l) => l.id) as [LanguageId, ...LanguageId[]];
-
-function text(s: string) {
-  return { content: [{ type: 'text' as const, text: s }] };
-}
-
-/** Accept absolute or relative, forward or back slashes; return root-relative forward-slash path. */
-function normalizeRel(ctx: AppContext, p: string): string {
-  const withSlashes = p.replace(/\\/g, '/');
-  const rel = /^[a-zA-Z]:\//.test(withSlashes) || withSlashes.startsWith('/')
-    ? relative(ctx.config.root, p).split(sep).join('/')
-    : withSlashes;
-  return rel.replace(/^\.\//, '');
-}
 
 export function registerTools(server: McpServer, ctx: AppContext): void {
   registerGraphTools(server, ctx);
@@ -327,6 +316,7 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
         lang: z.enum(LANG_VALUES),
         path_prefix: z.string().optional(),
         limit: z.number().int().min(1).max(500).default(50),
+        ...maxTokensArg,
       },
     },
     async (args) => {
@@ -371,7 +361,7 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
       if (results.length === 0) return text(`no matches in ${scanned} ${lang} files`);
       const footer =
         results.length >= args.limit ? `\n(hit limit=${args.limit} after ${scanned}/${files.length} files — narrow with path_prefix)` : '';
-      return text(results.join('\n') + footer);
+      return text(clampText(results.join('\n') + footer, args.max_tokens));
     },
   );
 }

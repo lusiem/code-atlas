@@ -1,22 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { readFileSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { join } from 'node:path';
 import { z } from 'zod';
 import type { AppContext } from '../context.js';
 import { assetForPath } from '../engines/detect.js';
 import { parseScene, type SceneNode } from '../engines/godot.js';
-
-function text(s: string) {
-  return { content: [{ type: 'text' as const, text: s }] };
-}
-
-function normalizeRel(ctx: AppContext, p: string): string {
-  const withSlashes = p.replace(/\\/g, '/');
-  const rel = /^[a-zA-Z]:\//.test(withSlashes) || withSlashes.startsWith('/')
-    ? relative(ctx.config.root, p).split(sep).join('/')
-    : withSlashes;
-  return rel.replace(/^\.\//, '');
-}
+import { normalizeRel, text } from './format.js';
 
 /** Depth of a node from its `parent` attribute ('' root, '.' root child, 'A/B' deeper). */
 function depthOf(node: SceneNode): number {

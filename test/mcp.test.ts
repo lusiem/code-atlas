@@ -232,6 +232,18 @@ describe('MCP server end-to-end', () => {
     expect(text).toContain('no symbol named "doesNotExist"');
   });
 
+  it('max_tokens truncates oversized output with a footer', async () => {
+    const full = await callText('ast_query', { pattern: '(identifier) @id', lang: 'typescript' });
+    const clamped = await callText('ast_query', {
+      pattern: '(identifier) @id',
+      lang: 'typescript',
+      max_tokens: 200,
+    });
+    expect(clamped.length).toBeLessThan(full.length);
+    expect(clamped).toContain('… truncated at ~200 tokens');
+    expect(clamped).toContain('raise max_tokens');
+  });
+
   it('semantic_search degrades to keyword-only without an embedder', async () => {
     const text = await callText('semantic_search', { query: 'add' });
     expect(text).toContain('[fts]');

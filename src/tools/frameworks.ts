@@ -2,11 +2,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { AppContext } from '../context.js';
 import type { RouteRow } from '../types.js';
-import { formatSymbolLine, paginationFooter } from './format.js';
-
-function text(s: string) {
-  return { content: [{ type: 'text' as const, text: s }] };
-}
+import { formatSymbolLine, paginationFooter, text } from './format.js';
+import { clampText, maxTokensArg } from './tokens.js';
 
 const FRAMEWORK_VALUES = ['express', 'fastify', 'nestjs', 'fastapi', 'flask', 'django'] as const;
 
@@ -59,6 +56,7 @@ export function registerFrameworkTools(server: McpServer, ctx: AppContext): void
         path_contains: z.string().optional().describe('substring of the route path'),
         limit: z.number().int().min(1).max(500).default(50),
         offset: z.number().int().min(0).default(0),
+        ...maxTokensArg,
       },
     },
     async (args) => {
@@ -80,7 +78,10 @@ export function registerFrameworkTools(server: McpServer, ctx: AppContext): void
         return text('no routes match the given filters');
       }
       const lines = rows.map((r) => routeLine(ctx, r));
-      return text(lines.join('\n') + paginationFooter(rows.length, args.limit, args.offset));
+      return text(clampText(
+        lines.join('\n') + paginationFooter(rows.length, args.limit, args.offset),
+        args.max_tokens,
+      ));
     },
   );
 

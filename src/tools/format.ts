@@ -1,6 +1,21 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
+import type { AppContext } from '../context.js';
 import type { SymbolRow } from '../types.js';
+
+/** Standard MCP text response envelope. */
+export function text(s: string) {
+  return { content: [{ type: 'text' as const, text: s }] };
+}
+
+/** Accept absolute or relative, forward or back slashes; return root-relative forward-slash path. */
+export function normalizeRel(ctx: AppContext, p: string): string {
+  const withSlashes = p.replace(/\\/g, '/');
+  const rel = /^[a-zA-Z]:\//.test(withSlashes) || withSlashes.startsWith('/')
+    ? relative(ctx.config.root, p).split(sep).join('/')
+    : withSlashes;
+  return rel.replace(/^\.\//, '');
+}
 
 /** Kind prefix, skipped when the signature already leads with the same keyword. */
 export function kindPrefix(sym: Pick<SymbolRow, 'kind' | 'signature'>): string {

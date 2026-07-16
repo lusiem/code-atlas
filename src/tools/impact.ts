@@ -2,24 +2,13 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { join } from 'node:path';
 import type { AppContext } from '../context.js';
 import type { EdgeKind, SymbolRow } from '../types.js';
 import { uncommittedChanges, type ChangedFile } from '../git/diff.js';
 import { findSymbol, symbolArgs } from './graph.js';
-import { paginationFooter } from './format.js';
-
-function text(s: string) {
-  return { content: [{ type: 'text' as const, text: s }] };
-}
-
-function normalizeRel(ctx: AppContext, p: string): string {
-  const withSlashes = p.replace(/\\/g, '/');
-  const rel = /^[a-zA-Z]:\//.test(withSlashes) || withSlashes.startsWith('/')
-    ? relative(ctx.config.root, p).split(sep).join('/')
-    : withSlashes;
-  return rel.replace(/^\.\//, '');
-}
+import { normalizeRel, paginationFooter, text } from './format.js';
+import { clampText, maxTokensArg } from './tokens.js';
 
 /** Edge kinds that propagate impact upward: callers, subtypes, overriders. */
 const IMPACT_KINDS: EdgeKind[] = ['calls', 'extends', 'implements', 'overrides'];
@@ -200,6 +189,7 @@ export function registerImpactTool(server: McpServer, ctx: AppContext): void {
         tests_only: z.boolean().default(false).describe('report only affected test files'),
         limit: z.number().int().min(1).max(500).default(100),
         offset: z.number().int().min(0).default(0),
+        ...maxTokensArg,
       },
     },
     async (args) => {
@@ -328,7 +318,10 @@ export function registerImpactTool(server: McpServer, ctx: AppContext): void {
           `${tag}${r.path.padEnd(width)}  — via ${r.via} (depth ${r.depth})${route ? ` ${route}` : ''}`,
         );
       }
-      return text(lines.join('\n') + paginationFooter(shown.length, args.limit, args.offset));
+      return text(clampText(
+        lines.join('\n') + paginationFooter(shown.length, args.limit, args.offset),
+        args.max_tokens,
+      ));
     },
   );
 }
