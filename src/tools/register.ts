@@ -14,6 +14,7 @@ import { registerDiagramTool } from './diagram.js';
 import { registerEngineTools } from './engines.js';
 import { registerFrameworkTools } from './frameworks.js';
 import { registerGraphTools } from './graph.js';
+import { registerHealthTools } from './health.js';
 import { registerImpactTool } from './impact.js';
 import { registerPackTool } from './pack.js';
 import { readFileSync } from 'node:fs';
@@ -37,6 +38,7 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
   registerDiagramTool(server, ctx);
   registerImpactTool(server, ctx);
   registerPackTool(server, ctx);
+  registerHealthTools(server, ctx);
   registerFrameworkTools(server, ctx);
 
   server.registerTool(

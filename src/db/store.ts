@@ -611,6 +611,118 @@ export class Store {
   }
 
   /**
+   * Symbols with zero incoming references anywhere: no occurrence resolves to
+   * them and no edge targets them (both columns indexed). Raw candidates —
+   * the health tool layers entry-point/route/lifecycle exclusions on top.
+   */
+  deadCandidates(opts: {
+    kinds: string[];
+    lang?: LanguageId;
+    pathPrefix?: string;
+    limit: number;
+  }): SymbolRow[] {
+    const conds: string[] = [
+      `s.kind IN (${opts.kinds.map(() => '?').join(',')})`,
+      `NOT EXISTS (SELECT 1 FROM occurrences o WHERE o.resolved_symbol_id = s.id)`,
+      `NOT EXISTS (SELECT 1 FROM edges e WHERE e.dst_symbol_id = s.id)`,
+      // local closures and factory-object members live and die with their
+      // enclosing function — reporting them as dead is pure noise
+      `NOT EXISTS (SELECT 1 FROM symbols p WHERE p.id = s.parent_symbol_id
+                   AND p.kind IN ('function','method','constructor'))`,
+    ];
+    const params: unknown[] = [...opts.kinds];
+    if (opts.lang) {
+      conds.push(`f.lang = ?`);
+      params.push(opts.lang);
+    }
+    if (opts.pathPrefix) {
+      conds.push(`f.path LIKE ? ESCAPE '\\'`);
+      params.push(`${escapeLike(opts.pathPrefix)}%`);
+    }
+    params.push(opts.limit);
+    const rows = this.db
+      .prepare(`${SYMBOL_SELECT} WHERE ${conds.join(' AND ')} ORDER BY f.path, s.start_line LIMIT ?`)
+      .all(...params) as unknown as SymbolRow[];
+    return normalize(rows);
+  }
+
+  /** Exported symbols referenced only from their own file — the export is unused. */
+  internalOnlyExports(opts: {
+    kinds: string[];
+    lang?: LanguageId;
+    pathPrefix?: string;
+    limit: number;
+  }): SymbolRow[] {
+    const conds: string[] = [
+      `s.is_exported = 1`,
+      `s.parent_symbol_id IS NULL`,
+      `s.kind IN (${opts.kinds.map(() => '?').join(',')})`,
+      `NOT EXISTS (SELECT 1 FROM occurrences o WHERE o.resolved_symbol_id = s.id AND o.file_id != s.file_id)`,
+      `NOT EXISTS (SELECT 1 FROM edges e JOIN symbols src ON src.id = e.src_symbol_id
+                   WHERE e.dst_symbol_id = s.id AND src.file_id != s.file_id)`,
+      // has at least one internal use, else it belongs in the dead list instead
+      `(EXISTS (SELECT 1 FROM occurrences o WHERE o.resolved_symbol_id = s.id)
+        OR EXISTS (SELECT 1 FROM edges e WHERE e.dst_symbol_id = s.id))`,
+    ];
+    const params: unknown[] = [...opts.kinds];
+    if (opts.lang) {
+      conds.push(`f.lang = ?`);
+      params.push(opts.lang);
+    }
+    if (opts.pathPrefix) {
+      conds.push(`f.path LIKE ? ESCAPE '\\'`);
+      params.push(`${escapeLike(opts.pathPrefix)}%`);
+    }
+    params.push(opts.limit);
+    const rows = this.db
+      .prepare(`${SYMBOL_SELECT} WHERE ${conds.join(' AND ')} ORDER BY f.path, s.start_line LIMIT ?`)
+      .all(...params) as unknown as SymbolRow[];
+    return normalize(rows);
+  }
+
+  /**
+   * Occurrence counts per name — dynamic-dispatch hedging for dead-code claims.
+   * unresolvedOnly counts only unbound usages; false counts every usage (methods:
+   * a same-name call resolved to a *different* symbol is exactly the dispatch
+   * ambiguity the hedge exists for).
+   */
+  nameOccurrenceCounts(names: Iterable<string>, unresolvedOnly: boolean): Map<string, number> {
+    const out = new Map<string, number>();
+    const stmt = this.db.prepare(
+      `SELECT COUNT(*) AS n FROM occurrences WHERE name = ?${unresolvedOnly ? ' AND resolved_symbol_id IS NULL' : ''}`,
+    );
+    for (const name of new Set(names)) {
+      const n = (stmt.get(name) as { n: number }).n;
+      if (n > 0) out.set(name, n);
+    }
+    return out;
+  }
+
+  /** Approximate line count per file (max symbol end line) — sizes for hotspot scoring. */
+  fileLineCounts(): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const row of this.db
+      .prepare(`SELECT f.path, MAX(s.end_line) AS lines FROM files f JOIN symbols s ON s.file_id = f.id GROUP BY f.id`)
+      .all() as Array<{ path: string; lines: number }>) {
+      out.set(row.path, row.lines);
+    }
+    return out;
+  }
+
+  /** Symbol ids serving as route handlers, and file ids containing any route. */
+  routeAnchors(): { handlerIds: Set<number>; fileIds: Set<number> } {
+    const handlerIds = new Set<number>();
+    const fileIds = new Set<number>();
+    for (const row of this.db
+      .prepare(`SELECT handler_symbol_id AS h, file_id AS f FROM routes`)
+      .all() as Array<{ h: number | null; f: number }>) {
+      if (row.h !== null) handlerIds.add(row.h);
+      fileIds.add(row.f);
+    }
+    return { handlerIds, fileIds };
+  }
+
+  /**
    * Unresolved occurrences of a name outside one file — the damage sites left
    * behind when a definition of that name is removed.
    */

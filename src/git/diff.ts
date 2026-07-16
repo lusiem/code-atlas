@@ -21,7 +21,7 @@ export type GitResult =
 /** Cap on per-file hunk queries so a huge working tree can't stall the tool. */
 const HUNK_FILE_CAP = 200;
 
-function git(root: string, args: string[]): Promise<{ ok: true; out: string } | { ok: false; reason: string }> {
+export function git(root: string, args: string[]): Promise<{ ok: true; out: string } | { ok: false; reason: string }> {
   return new Promise((resolve) => {
     execFile(
       'git',
