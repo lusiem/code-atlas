@@ -48,6 +48,13 @@ export class Store {
   readonly db: Database;
   /** sqlite-vec loaded — cosine scans run in C instead of JS. */
   readonly vecAccel: boolean;
+  /**
+   * Dimensions of the vec0 KNN table (chunk_vec_idx) when it is usable, else
+   * null. The table is a derived cache owned by Store, deliberately NOT part
+   * of the versioned schema: its DDL only parses when the extension loaded,
+   * and a count-mismatch rebuild recovers sessions where it did not.
+   */
+  private vecIdxDims: number | null = null;
 
   constructor(dbPath: string) {
     if (dbPath !== ':memory:') {
@@ -76,6 +83,46 @@ export class Store {
       // unsupported platform — knnChunks falls back to a JS scan
     }
     this.vecAccel = vec;
+    const dims = Number(this.getMeta('embedding_dims') ?? 0);
+    if (Number.isInteger(dims) && dims > 0) this.tryCreateVecIdx(dims);
+  }
+
+  /** Create (or adopt) the vec0 KNN table for this dimension; backfill on drift. */
+  private tryCreateVecIdx(dims: number): boolean {
+    if (!this.vecAccel) return false;
+    if (this.vecIdxDims === dims) return true;
+    try {
+      if (this.getMeta('vec_idx_dims') !== String(dims)) {
+        this.db.exec(`DROP TABLE IF EXISTS chunk_vec_idx`);
+      }
+      this.db.exec(
+        `CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vec_idx
+         USING vec0(chunk_id integer primary key, embedding float[${dims}] distance_metric=cosine)`,
+      );
+      this.setMeta('vec_idx_dims', String(dims));
+      // drift (a session without the extension, a crash mid-write): rebuild
+      const inIdx = (this.db.prepare(`SELECT COUNT(*) AS n FROM chunk_vec_idx`).get() as { n: number }).n;
+      const stored = (
+        this.db.prepare(`SELECT COUNT(*) AS n FROM chunk_vectors WHERE length(embedding) = ?`).get(dims * 4) as { n: number }
+      ).n;
+      if (inIdx !== stored) {
+        const txn = this.db.transaction(() => {
+          this.db.exec(`DELETE FROM chunk_vec_idx`);
+          this.db
+            .prepare(
+              `INSERT INTO chunk_vec_idx (chunk_id, embedding)
+               SELECT chunk_id, embedding FROM chunk_vectors WHERE length(embedding) = ?`,
+            )
+            .run(dims * 4);
+        });
+        txn();
+      }
+      this.vecIdxDims = dims;
+      return true;
+    } catch {
+      this.vecIdxDims = null;
+      return false;
+    }
   }
 
   close(): void {
@@ -220,7 +267,14 @@ export class Store {
         const reused = oldVectors.get(ch.textHash);
         const chunkId = insertChunk.run(fileId, symbolId, ch.textHash, ch.content, reused ? 1 : 0)
           .lastInsertRowid;
-        if (reused) insertVector.run(chunkId, reused);
+        if (reused) {
+          insertVector.run(chunkId, reused);
+          if (this.vecIdxDims !== null && reused.byteLength === this.vecIdxDims * 4) {
+            this.db
+              .prepare(`INSERT INTO chunk_vec_idx (chunk_id, embedding) VALUES (?, ?)`)
+              .run(BigInt(chunkId), reused); // vec0 needs an int64-typed key
+          }
+        }
       }
 
       if (routes.length > 0) {
@@ -273,6 +327,12 @@ export class Store {
   }
 
   private deleteFileRows(fileId: number): void {
+    if (this.vecIdxDims !== null) {
+      // chunks vanish via the symbols cascade below; vec0 has no FKs to follow
+      this.db
+        .prepare(`DELETE FROM chunk_vec_idx WHERE chunk_id IN (SELECT id FROM chunks WHERE file_id=?)`)
+        .run(fileId);
+    }
     this.db
       .prepare(
         `DELETE FROM edges WHERE src_symbol_id IN (SELECT id FROM symbols WHERE file_id=?)
@@ -901,10 +961,23 @@ export class Store {
        ON CONFLICT(chunk_id) DO UPDATE SET embedding = excluded.embedding`,
     );
     const mark = this.db.prepare(`UPDATE chunks SET embedded = 1 WHERE id = ?`);
+    const mirror =
+      rows.length > 0 && this.tryCreateVecIdx(rows[0]!.vector.length)
+        ? {
+            del: this.db.prepare(`DELETE FROM chunk_vec_idx WHERE chunk_id = ?`),
+            ins: this.db.prepare(`INSERT INTO chunk_vec_idx (chunk_id, embedding) VALUES (?, ?)`),
+          }
+        : null;
     const txn = this.db.transaction(() => {
       for (const r of rows) {
-        insert.run(r.chunkId, Buffer.from(r.vector.buffer, r.vector.byteOffset, r.vector.byteLength));
+        const buf = Buffer.from(r.vector.buffer, r.vector.byteOffset, r.vector.byteLength);
+        insert.run(r.chunkId, buf);
         mark.run(r.chunkId);
+        if (mirror && r.vector.length === this.vecIdxDims) {
+          // vec0 rejects REAL-typed keys; BigInt binds as a true int64
+          mirror.del.run(BigInt(r.chunkId));
+          mirror.ins.run(BigInt(r.chunkId), buf);
+        }
       }
     });
     txn();
@@ -943,6 +1016,7 @@ export class Store {
     const txn = this.db.transaction(() => {
       this.db.exec(`DELETE FROM chunk_vectors`);
       this.db.exec(`UPDATE chunks SET embedded = 0`);
+      if (this.vecIdxDims !== null) this.db.exec(`DELETE FROM chunk_vec_idx`);
     });
     txn();
   }
@@ -959,6 +1033,29 @@ export class Store {
   ): Array<{ chunkId: number; symbolId: number; score: number }> {
     const langJoin = lang ? `JOIN files f ON f.id = c.file_id` : '';
     const langWhere = lang ? `WHERE f.lang = ?` : '';
+    // tier 1: real KNN over the vec0 index (no full materialized join).
+    // vec0 can't join-filter, so a lang filter overfetches and trims after.
+    if (this.vecIdxDims === query.length) {
+      try {
+        const rows = this.db
+          .prepare(
+            `SELECT c.id AS chunkId, c.symbol_id AS symbolId, 1.0 - v.distance AS score
+             FROM (SELECT chunk_id, distance FROM chunk_vec_idx WHERE embedding MATCH ? AND k = ?) v
+             JOIN chunks c ON c.id = v.chunk_id ${langJoin} ${langWhere}
+             ORDER BY v.distance ASC LIMIT ?`,
+          )
+          .all(
+            Buffer.from(query.buffer, query.byteOffset, query.byteLength),
+            BigInt(lang ? k * 4 : k), // vec0 params must be int64-typed
+            ...(lang ? [lang] : []),
+            k,
+          ) as Array<{ chunkId: number; symbolId: number; score: number }>;
+        // an under-filled lang overfetch falls through to the exact scan
+        if (!lang || rows.length >= k) return rows;
+      } catch {
+        // vec0 hiccup — the scan tiers below still answer
+      }
+    }
     if (this.vecAccel) {
       const params: unknown[] = [Buffer.from(query.buffer, query.byteOffset, query.byteLength)];
       if (lang) params.push(lang);

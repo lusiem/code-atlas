@@ -111,3 +111,61 @@ describe('Store', () => {
     expect(store.symbolAt(file.id, 99, 0)).toBeUndefined();
   });
 });
+
+describe('knnChunks vec0 cache', () => {
+  const meta = { path: 'src/user.ts', lang: 'typescript' as const, hash: 'h1', size: 100, mtimeMs: 1, isTest: false };
+  const chunks = [
+    { symbolIndex: 0, textHash: 't1', content: 'class UserService manages users' },
+    { symbolIndex: 1, textHash: 't2', content: 'findUser looks a user up by id' },
+  ];
+  const dims = 8;
+  const vec = (values: number[]): Float32Array => {
+    const v = new Float32Array(dims);
+    values.forEach((x, i) => (v[i] = x));
+    return v;
+  };
+
+  it('ranks identically to the exact scan and mirrors deletes', () => {
+    const store = new Store(':memory:');
+    store.replaceFile(meta, sampleExtraction(), chunks);
+    const pending = store.pendingChunks(10);
+    expect(pending).toHaveLength(2);
+    store.writeChunkVectors([
+      { chunkId: pending[0]!.id, vector: vec([1, 0]) },
+      { chunkId: pending[1]!.id, vector: vec([0.6, 0.8]) },
+    ]);
+
+    const hits = store.knnChunks(vec([1, 0]), 2);
+    expect(hits).toHaveLength(2);
+    expect(hits[0]!.chunkId).toBe(pending[0]!.id);
+    expect(hits[0]!.score).toBeCloseTo(1, 3);
+    expect(hits[1]!.chunkId).toBe(pending[1]!.id);
+    expect(hits[1]!.score).toBeCloseTo(0.6, 3);
+
+    if (store.vecAccel) {
+      const count = () =>
+        (store.db.prepare('SELECT COUNT(*) AS n FROM chunk_vec_idx').get() as { n: number }).n;
+      expect(count()).toBe(2);
+      store.removeFile(meta.path);
+      expect(count()).toBe(0);
+    }
+    store.close();
+  });
+
+  it('lang filter stays correct through the overfetch path', () => {
+    const store = new Store(':memory:');
+    store.replaceFile(meta, sampleExtraction(), chunks);
+    store.replaceFile(
+      { ...meta, path: 'src/other.py', lang: 'python' as const, hash: 'h2' },
+      sampleExtraction(),
+      [{ symbolIndex: 0, textHash: 't3', content: 'python service' }],
+    );
+    const pending = store.pendingChunks(10);
+    store.writeChunkVectors(
+      pending.map((c, i) => ({ chunkId: c.id, vector: vec([1 - i * 0.1, i * 0.1]) })),
+    );
+    const hits = store.knnChunks(vec([1, 0]), 5, 'python');
+    expect(hits.length).toBe(1); // only the python chunk qualifies
+    store.close();
+  });
+});
