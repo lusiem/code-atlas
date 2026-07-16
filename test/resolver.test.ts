@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { Store } from '../src/db/store.js';
@@ -123,5 +124,136 @@ describe('resolver: ubiquitous names', () => {
     const render = rows.find((r) => r.name === 'render' && r.kind === 'method')!;
     const incoming = pyStore.edgesFor(render.id, 'in', ['calls']);
     expect(incoming.some((e) => e.path === 'pkg/child.py')).toBe(true);
+  });
+});
+
+// ---------- manifest-based resolution: PHP PSR-4, C# namespaces, Swift SPM ----------
+
+describe('resolver: PHP PSR-4', () => {
+  let root: string;
+  let phpStore: Store;
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), 'atlas-php-'));
+    writeFileSync(join(root, 'composer.json'), JSON.stringify({ autoload: { 'psr-4': { 'App\\': 'src/' } } }));
+    mkdirSync(join(root, 'src', 'Service'), { recursive: true });
+    writeFileSync(
+      join(root, 'src', 'Service', 'Mailer.php'),
+      '<?php\nnamespace App\\Service;\nclass Mailer {\n  public function send(): void {}\n}\n',
+    );
+    writeFileSync(
+      join(root, 'src', 'App.php'),
+      '<?php\nnamespace App;\nuse App\\Service\\Mailer;\nclass App {\n  public function run(): void {\n    $m = new Mailer();\n    $m->send();\n  }\n}\n',
+    );
+    const config = loadConfig(root);
+    phpStore = new Store(':memory:');
+    await new Indexer(config, phpStore).run();
+  });
+
+  afterAll(() => {
+    phpStore?.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('maps use statements through composer autoload roots', () => {
+    const app = phpStore.getFileByPath('src/App.php')!;
+    const deps = phpStore.dependenciesOf(app.id);
+    expect(deps.some((d) => d.resolvedPath === 'src/Service/Mailer.php')).toBe(true);
+  });
+});
+
+describe('resolver: C# namespaces', () => {
+  let root: string;
+  let csStore: Store;
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), 'atlas-cs-'));
+    mkdirSync(join(root, 'Models'));
+    mkdirSync(join(root, 'App'));
+    writeFileSync(
+      join(root, 'Models', 'User.cs'),
+      'namespace Acme.Models {\n  public class User {\n    public string Name = "";\n  }\n}\n',
+    );
+    writeFileSync(
+      join(root, 'Models', 'Role.cs'),
+      'namespace Acme.Models {\n  public class Role {\n    public User Owner = new User();\n  }\n}\n',
+    );
+    writeFileSync(
+      join(root, 'App', 'Program.cs'),
+      'using Acme.Models;\nnamespace Acme.App {\n  class Program {\n    static void Main() {\n      var u = new User();\n    }\n  }\n}\n',
+    );
+    const config = loadConfig(root);
+    csStore = new Store(':memory:');
+    await new Indexer(config, csStore).run();
+  });
+
+  afterAll(() => {
+    csStore?.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('resolves a using directive to a namespace member file', () => {
+    const program = csStore.getFileByPath('App/Program.cs')!;
+    const deps = csStore.dependenciesOf(program.id);
+    expect(deps.some((d) => d.resolvedPath?.startsWith('Models/'))).toBe(true);
+  });
+
+  it('lifts used-namespace symbols to the imported-file tier', () => {
+    const user = csStore.symbolsByExactName('User').find((s) => s.kind === 'class')!;
+    const refs = csStore.referencesTo(user.id, 'User', 50, 0);
+    const fromProgram = refs.find((r) => r.path === 'App/Program.cs' && r.resolvedSymbolId === user.id);
+    expect(fromProgram).toBeDefined();
+    expect(fromProgram!.confidence!).toBeGreaterThanOrEqual(0.69);
+  });
+
+  it('same-namespace files see each other without a using', () => {
+    const user = csStore.symbolsByExactName('User').find((s) => s.kind === 'class')!;
+    const refs = csStore.referencesTo(user.id, 'User', 50, 0);
+    const fromRole = refs.find((r) => r.path === 'Models/Role.cs' && r.resolvedSymbolId === user.id);
+    expect(fromRole).toBeDefined();
+    expect(fromRole!.confidence!).toBeGreaterThanOrEqual(0.69);
+  });
+});
+
+describe('resolver: Swift SPM modules', () => {
+  let root: string;
+  let swiftStore: Store;
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), 'atlas-swift-'));
+    mkdirSync(join(root, 'Sources', 'Core'), { recursive: true });
+    mkdirSync(join(root, 'Sources', 'App'), { recursive: true });
+    writeFileSync(
+      join(root, 'Sources', 'Core', 'Point.swift'),
+      'public struct Point {\n  public var x: Int\n  public init(x: Int) { self.x = x }\n}\n',
+    );
+    writeFileSync(
+      join(root, 'Sources', 'App', 'main.swift'),
+      'import Core\n\nfunc build() -> Point {\n  return Point(x: 1)\n}\n',
+    );
+    const config = loadConfig(root);
+    swiftStore = new Store(':memory:');
+    await new Indexer(config, swiftStore).run();
+  });
+
+  afterAll(() => {
+    swiftStore?.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('resolves module imports to the Sources/<Module> subtree', () => {
+    const main = swiftStore.getFileByPath('Sources/App/main.swift')!;
+    const deps = swiftStore.dependenciesOf(main.id);
+    expect(deps.some((d) => d.resolvedPath === 'Sources/Core/Point.swift')).toBe(true);
+    // stdlib-style imports stay external
+    expect(deps.filter((d) => d.specifier === 'Foundation').every((d) => d.resolvedPath === null)).toBe(true);
+  });
+
+  it('lifts module symbols to the imported-file tier', () => {
+    const point = swiftStore.symbolsByExactName('Point').find((s) => s.kind === 'struct')!;
+    const refs = swiftStore.referencesTo(point.id, 'Point', 50, 0);
+    const fromMain = refs.find((r) => r.path === 'Sources/App/main.swift' && r.resolvedSymbolId === point.id);
+    expect(fromMain).toBeDefined();
+    expect(fromMain!.confidence!).toBeGreaterThanOrEqual(0.69);
   });
 });

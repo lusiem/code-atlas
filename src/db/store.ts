@@ -698,6 +698,22 @@ export class Store {
     return out;
   }
 
+  /** Files declaring each namespace symbol of a language, paths sorted — C# using resolution. */
+  namespaceFilePaths(lang: LanguageId): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    for (const row of this.db
+      .prepare(
+        `SELECT DISTINCT s.name, f.path FROM symbols s JOIN files f ON f.id = s.file_id
+         WHERE s.kind = 'namespace' AND f.lang = ? ORDER BY s.name, f.path`,
+      )
+      .all(lang) as Array<{ name: string; path: string }>) {
+      const list = out.get(row.name) ?? [];
+      list.push(row.path);
+      out.set(row.name, list);
+    }
+    return out;
+  }
+
   /** Approximate line count per file (max symbol end line) — sizes for hotspot scoring. */
   fileLineCounts(): Map<string, number> {
     const out = new Map<string, number>();

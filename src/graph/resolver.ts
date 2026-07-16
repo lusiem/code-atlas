@@ -280,18 +280,23 @@ export async function resolveWorkspace(
 
   // 1. imports -> files (always global: a new file can satisfy anyone's import)
   const importRows = store.listImportRows();
-  const goModule = readGoModule(rootDir);
-  const dartPackage = readDartPackage(rootDir);
-  // Godot res:// paths are relative to their project.godot dir — a workspace
-  // can hold many projects (monorepos of samples/games). Longest root first.
-  const godotRoots = store
-    .listAssets()
-    .filter((a) => a.kind === 'project')
-    .map((a) => a.path.replace(/\/?project\.godot$/, ''))
-    .sort((a, b) => b.length - a.length);
+  const manifests: Manifests = {
+    goModule: readGoModule(rootDir),
+    dartPackage: readDartPackage(rootDir),
+    // Godot res:// paths are relative to their project.godot dir — a workspace
+    // can hold many projects (monorepos of samples/games). Longest root first.
+    godotRoots: store
+      .listAssets()
+      .filter((a) => a.kind === 'project')
+      .map((a) => a.path.replace(/\/?project\.godot$/, ''))
+      .sort((a, b) => b.length - a.length),
+    composerPsr4: readComposerPsr4(rootDir),
+    csharpNamespaceFiles: store.namespaceFilePaths('c_sharp'),
+    swiftModuleFiles: swiftModuleDirs(pathToFileId.keys()),
+  };
   const resolutions: Array<{ id: number; fileId: number | null }> = [];
   for (const imp of importRows) {
-    const target = resolveImport(imp, pathToFileId, goModule, godotRoots, dartPackage);
+    const target = resolveImport(imp, pathToFileId, manifests);
     // a changed import target invalidates that file's occurrence resolutions
     if (scope && target !== imp.resolvedFileId) scope.add(imp.fileId);
     resolutions.push({ id: imp.id, fileId: target });
@@ -334,6 +339,7 @@ export async function resolveWorkspace(
     if (!targets) ws.importedFiles.set(imp.fileId, (targets = new Set()));
     targets.add(imp.resolvedFileId);
   }
+  augmentModuleVisibility(ws, importRows, manifests);
 
   // 3. occurrences -> symbols (scoped to affected files when incremental)
   const occurrences = scope
@@ -505,6 +511,48 @@ function lowestId(list: SymbolLite[]): SymbolLite {
   return list.reduce((a, b) => (a.id <= b.id ? a : b));
 }
 
+/** Big namespaces would flood the imported-file candidate tier — skip them. */
+const MODULE_FILE_CAP = 50;
+
+/**
+ * C# and Swift imports name a namespace/module, not a file: a `using X`
+ * makes every file of X visible, and C# files see their own namespace without
+ * any using at all. Adding those files to importedFiles lifts their symbols
+ * from the 0.60/0.35 global tiers to the 0.70 imported-file tier.
+ */
+function augmentModuleVisibility(
+  ws: WorkspaceIndex,
+  importRows: ImportRow[],
+  manifests: Manifests,
+): void {
+  const idsFor = (paths: string[] | undefined): number[] => {
+    if (!paths || paths.length > MODULE_FILE_CAP) return [];
+    return paths.map((p) => ws.pathToFileId.get(p)).filter((id): id is number => id !== undefined);
+  };
+  const addAll = (fileId: number, ids: number[]): void => {
+    if (ids.length === 0) return;
+    let targets = ws.importedFiles.get(fileId);
+    if (!targets) ws.importedFiles.set(fileId, (targets = new Set()));
+    for (const id of ids) if (id !== fileId) targets.add(id);
+  };
+
+  for (const imp of importRows) {
+    if (imp.lang === 'c_sharp') {
+      const spec = imp.specifier.replace(/^static\s+/, '').replace(/^\w+\s*=\s*/, '');
+      addAll(imp.fileId, idsFor(manifests.csharpNamespaceFiles.get(spec)));
+    } else if (imp.lang === 'swift') {
+      addAll(imp.fileId, idsFor(manifests.swiftModuleFiles.get(imp.specifier.split('.')[0]!)));
+    }
+  }
+
+  // C# implicit visibility: files sharing a namespace see each other
+  for (const paths of manifests.csharpNamespaceFiles.values()) {
+    const ids = idsFor(paths);
+    if (ids.length < 2) continue;
+    for (const id of ids) addAll(id, ids);
+  }
+}
+
 /** Innermost symbol containing a position (smallest line span wins). */
 function enclosingSymbol(
   ws: WorkspaceIndex,
@@ -533,6 +581,19 @@ function enclosingSymbol(
 // import specifier -> file
 // ---------------------------------------------------------------------------
 
+/** Everything resolveImportPath needs beyond the specifier — read once per pass. */
+interface Manifests {
+  goModule: string | null;
+  dartPackage: string | null;
+  godotRoots: string[];
+  /** composer.json psr-4 roots, longest prefix first. */
+  composerPsr4: Array<{ prefix: string; dir: string }>;
+  /** C# namespace -> declaring file paths (sorted). */
+  csharpNamespaceFiles: Map<string, string[]>;
+  /** SPM `Sources/<Module>/` (and Tests/) -> member file paths (sorted). */
+  swiftModuleFiles: Map<string, string[]>;
+}
+
 function readGoModule(rootDir: string): string | null {
   try {
     const text = readFileSync(join(rootDir, 'go.mod'), 'utf8');
@@ -540,6 +601,43 @@ function readGoModule(rootDir: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** composer.json psr-4 autoload roots (+dev), longest namespace prefix first. */
+function readComposerPsr4(rootDir: string): Array<{ prefix: string; dir: string }> {
+  try {
+    const json = JSON.parse(readFileSync(join(rootDir, 'composer.json'), 'utf8')) as {
+      autoload?: { 'psr-4'?: Record<string, string | string[]> };
+      'autoload-dev'?: { 'psr-4'?: Record<string, string | string[]> };
+    };
+    const out: Array<{ prefix: string; dir: string }> = [];
+    for (const src of [json.autoload?.['psr-4'], json['autoload-dev']?.['psr-4']]) {
+      if (!src) continue;
+      for (const [prefix, dirs] of Object.entries(src)) {
+        for (const d of Array.isArray(dirs) ? dirs : [dirs]) {
+          out.push({ prefix, dir: String(d).replace(/\/+$/, '') });
+        }
+      }
+    }
+    return out.sort((a, b) => b.prefix.length - a.prefix.length);
+  } catch {
+    return [];
+  }
+}
+
+/** `Sources/<Module>/` and `Tests/<Module>/` subtrees, anywhere in the workspace. */
+function swiftModuleDirs(paths: Iterable<string>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const p of paths) {
+    if (!p.endsWith('.swift')) continue;
+    const m = /(?:^|\/)(?:Sources|Tests)\/([^/]+)\//.exec(p);
+    if (!m) continue;
+    const list = out.get(m[1]!) ?? [];
+    list.push(p);
+    out.set(m[1]!, list);
+  }
+  for (const list of out.values()) list.sort();
+  return out;
 }
 
 /** pubspec.yaml `name:` — makes `package:<self>/...` imports resolvable. */
@@ -555,21 +653,18 @@ function readDartPackage(rootDir: string): string | null {
 function resolveImport(
   imp: ImportRow,
   pathToFileId: Map<string, number>,
-  goModule: string | null,
-  godotRoots: string[],
-  dartPackage: string | null,
+  manifests: Manifests,
 ): number | null {
-  const path = resolveImportPath(imp, pathToFileId, goModule, godotRoots, dartPackage);
+  const path = resolveImportPath(imp, pathToFileId, manifests);
   return path === null ? null : (pathToFileId.get(path) ?? null);
 }
 
 function resolveImportPath(
   imp: ImportRow,
   pathToFileId: Map<string, number>,
-  goModule: string | null,
-  godotRoots: string[],
-  dartPackage: string | null,
+  manifests: Manifests,
 ): string | null {
+  const { goModule, godotRoots, dartPackage } = manifests;
   const has = (p: string): boolean => pathToFileId.has(p);
   const dir = parentDir(imp.path);
 
@@ -699,8 +794,12 @@ function resolveImportPath(
       return matches.length === 1 ? matches[0]! : null;
     }
 
-    case 'c_sharp':
-      return null; // namespaces do not map to files
+    case 'c_sharp': {
+      // `using X.Y` -> lexically-first file declaring that namespace; the
+      // importedFiles augmentation carries the namespace's remaining files
+      const spec = imp.specifier.replace(/^static\s+/, '').replace(/^\w+\s*=\s*/, '');
+      return manifests.csharpNamespaceFiles.get(spec)?.[0] ?? null;
+    }
 
     case 'gdscript': {
       // res:// is relative to the importing file's Godot project root — the
@@ -726,10 +825,17 @@ function resolveImportPath(
       return null;
     }
 
-    case 'php':
-      // PSR-4 namespace -> file mapping needs composer.json autoload roots;
-      // until then the workspace-global unique-name tier connects classes
+    case 'php': {
+      // PSR-4: `use App\Service\Mailer` + {"App\\": "src/"} -> src/Service/Mailer.php
+      const spec = imp.specifier.replace(/^\\/, '');
+      for (const { prefix, dir: base } of manifests.composerPsr4) {
+        if (!spec.startsWith(prefix)) continue;
+        const rest = spec.slice(prefix.length).replace(/\\/g, '/');
+        const n = normalize(base === '' ? `${rest}.php` : `${base}/${rest}.php`);
+        if (has(n)) return n;
+      }
       return null;
+    }
 
     case 'lua': {
       // require("a.b") -> a/b.lua, a/b/init.lua, plus LuaRocks/Neovim lua/ roots
@@ -767,8 +873,12 @@ function resolveImportPath(
       return null;
     }
 
-    case 'swift':
-      return null; // module imports; SPM/Xcode module maps are out of scope
+    case 'swift': {
+      // SPM layout: `import MyModule` -> Sources/MyModule/ first file; stdlib
+      // and system frameworks have no matching directory and fall through
+      const module = imp.specifier.split('.')[0]!;
+      return manifests.swiftModuleFiles.get(module)?.[0] ?? null;
+    }
 
     case 'terraform': {
       // module source = "./modules/net" -> that directory's main.tf (or any .tf)
