@@ -576,6 +576,51 @@ export class Store {
     this.db.prepare(`DELETE FROM edges WHERE provenance = ?`).run(provenance);
   }
 
+  deleteEdge(srcSymbolId: number, dstSymbolId: number, kind: EdgeKind): void {
+    this.db
+      .prepare(`DELETE FROM edges WHERE src_symbol_id = ? AND dst_symbol_id = ? AND kind = ?`)
+      .run(srcSymbolId, dstSymbolId, kind);
+  }
+
+  /** Heuristic call edges worth LSP verification, keyset-paginated by (src, dst). */
+  lowConfidenceCallEdges(
+    maxConfidence: number,
+    limit: number,
+    after?: { src: number; dst: number },
+  ): Array<{ srcSymbolId: number; dstSymbolId: number; confidence: number }> {
+    return this.db
+      .prepare(
+        `SELECT src_symbol_id AS srcSymbolId, dst_symbol_id AS dstSymbolId, confidence
+         FROM edges
+         WHERE kind = 'calls' AND provenance = 'index' AND confidence <= ?
+           AND (src_symbol_id > ? OR (src_symbol_id = ? AND dst_symbol_id > ?))
+         ORDER BY src_symbol_id, dst_symbol_id LIMIT ?`,
+      )
+      .all(maxConfidence, after?.src ?? -1, after?.src ?? -1, after?.dst ?? -1, limit) as Array<{
+      srcSymbolId: number;
+      dstSymbolId: number;
+      confidence: number;
+    }>;
+  }
+
+  /** A call occurrence within a span resolved to dst — the position an LSP definition verifies. */
+  callOccurrenceForEdge(
+    fileId: number,
+    dstSymbolId: number,
+    startLine: number,
+    endLine: number,
+  ): { startLine: number; startCol: number } | undefined {
+    return this.db
+      .prepare(
+        `SELECT start_line AS startLine, start_col AS startCol FROM occurrences
+         WHERE file_id = ? AND role = 'call' AND resolved_symbol_id = ?
+           AND start_line BETWEEN ? AND ? LIMIT 1`,
+      )
+      .get(fileId, dstSymbolId, startLine, endLine) as
+      | { startLine: number; startCol: number }
+      | undefined;
+  }
+
   insertEdges(edges: EdgeInsert[]): void {
     const stmt = this.db.prepare(
       `INSERT INTO edges (src_symbol_id, dst_symbol_id, kind, confidence, provenance)

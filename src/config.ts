@@ -12,6 +12,7 @@ const configFileSchema = z
       .object({
         enabled: z.boolean().default(true),
         download: z.boolean().default(true),
+        promoteEdges: z.boolean().default(false),
       })
       .partial()
       .default({}),
@@ -37,8 +38,12 @@ export interface AtlasConfig {
   maxFileBytes: number;
   /** Watch the workspace and reindex on change while serving (default true). */
   watch: boolean;
-  /** LSP layer: precise answers overlaid on the structural index. */
-  lsp: { enabled: boolean; download: boolean };
+  /**
+   * LSP layer: precise answers overlaid on the structural index.
+   * promoteEdges (opt-in): background pass that verifies low-confidence call
+   * edges against already-running servers, hard-budgeted per pass.
+   */
+  lsp: { enabled: boolean; download: boolean; promoteEdges: boolean };
   /** Local embedding layer backing semantic_search. model: 'code' | 'fast' | HF id. */
   embeddings: { enabled: boolean; download: boolean; model: string };
   /** Absolute path of the SQLite index. */
@@ -77,6 +82,7 @@ export function loadConfig(rootInput: string): AtlasConfig {
     lsp: {
       enabled: fileValues.lsp?.enabled ?? true,
       download: fileValues.lsp?.download ?? true,
+      promoteEdges: fileValues.lsp?.promoteEdges ?? false,
     },
     embeddings: {
       enabled: fileValues.embeddings?.enabled ?? true,

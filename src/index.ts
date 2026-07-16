@@ -7,6 +7,7 @@ import { Embedder } from './embeddings/embedder.js';
 import { Indexer } from './indexer/indexer.js';
 import { Watcher } from './indexer/watcher.js';
 import { LspManager } from './lsp/manager.js';
+import { promoteEdges } from './lsp/promote.js';
 import { createServer } from './server.js';
 
 function parseArgs(argv: string[]): {
@@ -102,6 +103,27 @@ async function main(): Promise<void> {
       });
       ctx.watcher.start();
       console.error('[code-atlas] watching for changes');
+    }
+    if (config.lsp.enabled && config.lsp.promoteEdges) {
+      // opt-in: verify low-confidence call edges against servers that other
+      // tool calls have already started; budgeted, cursor-resumed
+      let promoting = false;
+      const tick = async (): Promise<void> => {
+        if (promoting || indexer.progress.state === 'indexing') return;
+        promoting = true;
+        try {
+          const s = await promoteEdges(ctx);
+          if (s.examined > 0) {
+            console.error(
+              `[code-atlas] lsp edge promotion: ${s.confirmed} confirmed, ${s.corrected} corrected, ${s.unverified} unverified`,
+            );
+          }
+        } finally {
+          promoting = false;
+        }
+      };
+      setTimeout(() => void tick(), 30_000).unref();
+      setInterval(() => void tick(), 10 * 60_000).unref();
     }
   });
 }
